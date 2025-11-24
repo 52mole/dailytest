@@ -1,0 +1,22 @@
+name: Daily Task
+
+on:
+  schedule:
+    - cron: '0 16 * * *'
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - run: python daily_auto.py
+      env:
+        ACCOUNTS_CONFIG: ${{ secrets.ACCOUNTS_CONFIG }}
+        PACKETS_DATA: ${{ secrets.PACKETS_DATA }}
