@@ -289,6 +289,7 @@ class Client:
             self.connected = True
             print("[+] Login success")
             
+            threading.Thread(target=self.recv_loop, daemon=True).start()
             self.start_heartbeat()
             
             return True
@@ -297,6 +298,30 @@ class Client:
             print(f"[-] Login error: {e}")
             return False
     
+    def recv_loop(self):
+        while self.connected:
+            try:
+                data = self.main_socket.recv(4096)
+                if not data:
+                    self.connected = False
+                    break
+                
+                self.recv_buffer.extend(data)
+                
+                while len(self.recv_buffer) >= 4:
+                    packet_len = int.from_bytes(self.recv_buffer[:4], "big")
+                    if packet_len <= len(self.recv_buffer):
+                        packet_data = self.recv_buffer[:packet_len]
+                        self.recv_buffer = self.recv_buffer[packet_len:]
+                        
+                        packet = Packet(packet_data)
+                        packet.decrypt()
+                    else:
+                        break
+            except Exception:
+                self.connected = False
+                break
+
     def start_heartbeat(self):
         self.heartbeat_running = True
         self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
