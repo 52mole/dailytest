@@ -120,6 +120,7 @@ class Client:
         self.recv_buffer = bytearray()
         self.heartbeat_thread = None
         self.heartbeat_running = False
+        self.send_lock = threading.Lock()
     
     def connect_login_server(self):
         try:
@@ -287,6 +288,7 @@ class Client:
                 return False
             
             self.connected = True
+            self.main_socket.settimeout(None)  # 取消超时，防止挂机断线
             print("[+] Login success")
             
             threading.Thread(target=self.recv_loop, daemon=True).start()
@@ -338,8 +340,10 @@ class Client:
                 packet.cmd_id = 40
                 packet.user_id = user_id
                 packet.body = bytes([0x00])
-                packet.encrypt()
-                self.main_socket.send(packet.data())
+                
+                with self.send_lock:
+                    packet.encrypt()
+                    self.main_socket.send(packet.data())
                 
             except Exception:
                 break
@@ -353,8 +357,9 @@ class Client:
         if not self.connected or not self.main_socket:
             return False
         try:
-            packet.encrypt()
-            self.main_socket.send(packet.data())
+            with self.send_lock:
+                packet.encrypt()
+                self.main_socket.send(packet.data())
             return True
         except Exception:
             self.connected = False
@@ -473,6 +478,7 @@ def execute_daily_tasks(client, daily_items, custom_packets=None, server_id=100,
         while retry_count < max_retries and not packet_sent:
             if not client.connected:
                 print(f"[!] 连接已断开，尝试重连...")
+                client.close()  # 清理旧资源，停止旧线程
                 time.sleep(2)
                 
                 if not client.connect_login_server():
