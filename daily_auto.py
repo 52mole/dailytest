@@ -96,6 +96,7 @@ class Packet:
             res[index - 1] = (res[index - 1] << 5) % 256
         res[0] |= 3
         self.body = res
+        return self
 
     def decrypt(self):
         if len(self.body) == 0:
@@ -309,8 +310,8 @@ class Client:
                     break
                 
                 packet = Packet()
-                packet.cmd_id = 0
-                packet.body = bytes()
+                packet.cmd_id = 40
+                packet.body = bytes([0x00])
                 packet.encrypt()
                 self.main_socket.send(packet.data())
                 
