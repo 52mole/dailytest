@@ -311,6 +311,7 @@ class Client:
                 
                 packet = Packet()
                 packet.cmd_id = 40
+                packet.user_id = user_id
                 packet.body = bytes([0x00])
                 packet.encrypt()
                 self.main_socket.send(packet.data())
