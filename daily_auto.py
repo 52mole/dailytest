@@ -330,6 +330,7 @@ class Client:
             self.main_socket.send(packet.data())
             return True
         except Exception:
+            self.connected = False
             return False
     
     def close(self):
@@ -413,35 +414,76 @@ def load_daily_packets():
         return {}
 
 
-def execute_daily_tasks(client, daily_items, custom_packets=None):
+def execute_daily_tasks(client, daily_items, custom_packets=None, server_id=100, username="", password=""):
     global user_id
     all_packets = []
     for item_name, item_data in daily_items.items():
         count = item_data.get("count", 1)
         packets = item_data.get("packets", [])
-        for packet in packets:
-            for _ in range(count):
+        for _ in range(count):
+            for packet in packets:
                 packet_hex = packet.replace("{user_id}", get_hex(user_id))
                 packet_hex = packet_hex.replace("{lamu_id}", "00000000")
                 all_packets.append(packet_hex)
     
     if custom_packets:
-        all_packets.extend(custom_packets)
+        for packet in custom_packets:
+            packet_hex = packet.replace("{user_id}", get_hex(user_id))
+            packet_hex = packet_hex.replace("{lamu_id}", "00000000")
+            all_packets.append(packet_hex)
     
     if not all_packets:
         return False
+    
     success_count = 0
     fail_count = 0
-    start_time = time.time()
-    for packet_hex in all_packets:
-        try:
-            packet = Packet(packet_hex)
-            if client.send_packet(packet):
-                success_count += 1
-            else:
+    
+    for i, packet_hex in enumerate(all_packets):
+        retry_count = 0
+        max_retries = 3
+        packet_sent = False
+        
+        while retry_count < max_retries and not packet_sent:
+            if not client.connected:
+                print(f"[!] 连接已断开，尝试重连...")
+                time.sleep(2)
+                
+                if not client.connect_login_server():
+                    retry_count += 1
+                    continue
+                
+                if not client.login_server_auth(username, password, server_id):
+                    retry_count += 1
+                    continue
+                
+                if not client.connect_main_server(server_id):
+                    retry_count += 1
+                    continue
+                
+                if not client.main_server_login(server_id):
+                    retry_count += 1
+                    continue
+                
+                print("[+] 重连成功")
+            
+            try:
+                packet = Packet(packet_hex)
+                if client.send_packet(packet):
+                    success_count += 1
+                    packet_sent = True
+                else:
+                    fail_count += 1
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        time.sleep(0.1)
+            except Exception as e:
                 fail_count += 1
-        except Exception:
-            fail_count += 1
+                retry_count += 1
+                if retry_count < max_retries:
+                    time.sleep(0.1)
+        
+        if not packet_sent:
+            print(f"[!] 封包 {i+1}/{len(all_packets)} 发送失败")
         
         time.sleep(0.05)
     
@@ -511,7 +553,7 @@ def process_account(account, daily_items):
         if not client.main_server_login(server):
             return False
         
-        if not execute_daily_tasks(client, daily_items, custom_packets):
+        if not execute_daily_tasks(client, daily_items, custom_packets, server, username, password):
             return False
         
         if isinstance(online_minutes, (int, float)) and online_minutes > 0:
