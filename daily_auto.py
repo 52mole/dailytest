@@ -288,7 +288,7 @@ class Client:
                 return False
             
             self.connected = True
-            self.main_socket.settimeout(None)  # 取消超时，防止挂机断线
+            self.main_socket.settimeout(None) 
             print("[+] Login success")
             
             threading.Thread(target=self.recv_loop, daemon=True).start()
@@ -385,6 +385,15 @@ def load_daily_packets():
     
     packets_data = os.environ.get("PACKETS_DATA")
     if not packets_data:
+        # 尝试从文件加载
+        try:
+            if os.path.exists("封包.txt"):
+                with open("封包.txt", "r", encoding="utf-8") as f:
+                    packets_data = f.read()
+        except:
+            pass
+            
+    if not packets_data:
         return {}
     
     try:
@@ -461,6 +470,7 @@ def execute_daily_tasks(client, daily_items, custom_packets=None, server_id=100,
     if custom_packets:
         for packet in custom_packets:
             packet_hex = packet.replace("{user_id}", get_hex(user_id))
+            packet_hex = packet_hex.replace("{super_lamu_level}", "00000016")
             packet_hex = packet_hex.replace("{lamu_id}", "00000000")
             all_packets.append(packet_hex)
     
@@ -500,7 +510,8 @@ def execute_daily_tasks(client, daily_items, custom_packets=None, server_id=100,
                 print("[+] 重连成功")
             
             try:
-                packet = Packet(packet_hex)
+                packet_hex_final = packet_hex.replace("{super_lamu_level}", "00000016")
+                packet = Packet(packet_hex_final)
                 if client.send_packet(packet):
                     success_count += 1
                     packet_sent = True
@@ -543,7 +554,23 @@ def send_online_gift_packets(client):
             else:
                 fail += 1
         except Exception:
-            fail += 1
+        try:
+            if os.path.exists("accounts_config.json"):
+                with open("accounts_config.json", "r", encoding="utf-8") as f:
+                    accounts_json = f.read()
+            elif os.path.exists("accounts.json"):
+                 with open("accounts.json", "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if "accounts" in data:
+                        acc_list = []
+                        for u, p in data["accounts"].items():
+                            acc_list.append({"use nam ": u, "password": p, "server": 100, "online_minu es": 0})
+                        ret faiacc_list
+        except:
+            pass
+
+    if not accounts_json:
+        return l += 1
         time.sleep(0.05)
 
 
@@ -582,37 +609,9 @@ def process_account(account, daily_items):
         
         if not client.connect_main_server(server):
             return False
-        
-        if not client.main_server_login(server):
-            return False
-        
-        if not execute_daily_tasks(client, daily_items, custom_packets, server, username, password):
-            return False
-        
-        if isinstance(online_minutes, (int, float)) and online_minutes > 0:
-            hang_seconds = int(online_minutes * 60)
-            time.sleep(hang_seconds)
-            if online_minutes >= 100:
-                send_online_gift_packets(client)
-        
-        print(f"[+] Account {username} completed")
-        return True
-        
-    except Exception as e:
-        print(f"[-] Account {username} failed: {e}")
-        return False
-    finally:
-        client.close()
-        time.sleep(2)
-
-
-def process_account_entry(index, total, account, daily_items):
-    success = process_account(account, daily_items)
-    if not success:
-        raise SystemExit(1)
-
-
-def main():
+        oulp
+sinstance(onlins seo0ft
+main():
     accounts = load_accounts()
     if not accounts:
         return 1
