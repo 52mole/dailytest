@@ -468,6 +468,7 @@ def execute_daily_tasks(client, daily_items, custom_packets=None, server_id=100,
                 all_packets.append(packet_hex)
     
     if custom_packets:
+        print(f"[*] 加载 {len(custom_packets)} 自定义")
         for packet in custom_packets:
             packet_hex = packet.replace("{user_id}", get_hex(user_id))
             packet_hex = packet_hex.replace("{super_lamu_level}", "00000016")
@@ -477,6 +478,7 @@ def execute_daily_tasks(client, daily_items, custom_packets=None, server_id=100,
     if not all_packets:
         return False
     
+    print(f"[*] 总计 {len(all_packets)} 待发送")
     success_count = 0
     fail_count = 0
     
@@ -677,7 +679,8 @@ def main():
     
     daily_items = load_daily_packets()
     if not daily_items:
-        return 1
+        print("[!] 未加载到封包数据，仅发送自定义封包")
+        daily_items = {}
     
     success_count = 0
     processes = []
