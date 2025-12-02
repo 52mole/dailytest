@@ -510,7 +510,7 @@ def execute_daily_tasks(client, daily_items, custom_packets=None, server_id=100,
         while retry_count < max_retries and not packet_sent:
             if not client.connected:
                 print(f"[!] 连接已断开，尝试重连...")
-                client.close()  # 清理旧资源，停止旧线程
+                client.close()  # 清理资源
                 time.sleep(2)
                 
                 if not client.connect_login_server():
@@ -586,7 +586,6 @@ def load_accounts():
     
     accounts_json = os.environ.get("ACCOUNTS_CONFIG")
     if not accounts_json:
-        # 尝试从文件加载
         try:
             if os.path.exists("accounts_config.json"):
                 with open("accounts_config.json", "r", encoding="utf-8") as f:
@@ -659,7 +658,6 @@ def process_account(account, daily_items):
                         time.sleep(5)
                 time.sleep(1)
                 
-            # 挂机结束后确保在线再领取奖励
             if not client.connected:
                 print(f"[!] 挂机结束后重连...")
                 client.close()
@@ -675,7 +673,6 @@ def process_account(account, daily_items):
             if online_minutes >= 100:
                 send_online_gift_packets(client)
         else:
-            # 不需要挂机时直接领取
             execute_daily_tasks(client, daily_items, custom_packets, server, username, password)
         
         print(f"[+] Account {username} completed")
