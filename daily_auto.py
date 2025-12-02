@@ -638,9 +638,6 @@ def process_account(account, daily_items):
         if not client.main_server_login(server):
             return False
         
-        if not execute_daily_tasks(client, daily_items, custom_packets, server, username, password):
-            return False
-        
         if isinstance(online_minutes, (int, float)) and online_minutes > 0:
             hang_seconds = int(online_minutes * 60)
             print(f"[*] 开始挂机 {online_minutes} 分钟...")
@@ -662,18 +659,24 @@ def process_account(account, daily_items):
                         time.sleep(5)
                 time.sleep(1)
                 
-            if online_minutes >= 100:
-                # 确保发送礼物前是在线的
-                if not client.connected:
-                    print(f"[!] 发送礼物前重连...")
-                    client.close()
-                    if client.connect_login_server() and \
+            # 挂机结束后确保在线再领取奖励
+            if not client.connected:
+                print(f"[!] 挂机结束后重连...")
+                client.close()
+                if not (client.connect_login_server() and \
                        client.login_server_auth(username, password, server) and \
                        client.connect_main_server(server) and \
-                       client.main_server_login(server):
-                        send_online_gift_packets(client)
-                else:
-                    send_online_gift_packets(client)
+                       client.main_server_login(server)):
+                    print("[-] 重连失败")
+                    return False
+            
+            execute_daily_tasks(client, daily_items, custom_packets, server, username, password)
+            
+            if online_minutes >= 100:
+                send_online_gift_packets(client)
+        else:
+            # 不需要挂机时直接领取
+            execute_daily_tasks(client, daily_items, custom_packets, server, username, password)
         
         print(f"[+] Account {username} completed")
         return True
