@@ -470,10 +470,16 @@ def execute_daily_tasks(client, daily_items, custom_packets=None, server_id=100,
     if custom_packets:
         print(f"[*] 加载 {len(custom_packets)} 自定义")
         for packet in custom_packets:
+            repeat = 1
+            if "*" in packet:
+                parts = packet.rsplit("*", 1)
+                if len(parts) == 2 and parts[1].isdigit():
+                    packet, repeat = parts[0], int(parts[1])
             packet_hex = packet.replace("{user_id}", get_hex(user_id))
             packet_hex = packet_hex.replace("{super_lamu_level}", "00000016")
             packet_hex = packet_hex.replace("{lamu_id}", "00000000")
-            all_packets.append(packet_hex)
+            for _ in range(repeat):
+                all_packets.append(packet_hex)
     
     if not all_packets:
         return False
