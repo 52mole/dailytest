@@ -176,6 +176,16 @@ class Client:
         self.last_ranch_fish_diag = None
         self.recv_cmd_history = []
         self.recv_cmd_history_lock = threading.Lock()
+        self.last_sent_info = ""
+        self.last_sent_info_lock = threading.Lock()
+
+    def set_last_sent_info(self, info):
+        with self.last_sent_info_lock:
+            self.last_sent_info = info
+
+    def get_last_sent_info(self):
+        with self.last_sent_info_lock:
+            return self.last_sent_info
 
     def connect_login_server(self):
         try:
@@ -848,7 +858,11 @@ def _run_packet_batch(
         sent = False
         while retry_count < 3 and not sent:
             if not client.connected:
-                print("[!] 连接中断，尝试重连...")
+                last_info = client.get_last_sent_info()
+                if last_info:
+                    print(f"[!] 连接中断，尝试重连... (最近发送: {last_info})")
+                else:
+                    print("[!] 连接中断，尝试重连...")
                 client.close()
                 time.sleep(2)
                 relogin_ok = (
@@ -865,12 +879,14 @@ def _run_packet_batch(
                     if not run_ranch_jump_task(client, interval_ms, server_id, username, password):
                         retry_count += 1
                         continue
+                time.sleep(1.0)
 
             try:
                 final_hex = packet_hex.replace("{user_id}", get_hex(user_id))
                 final_hex = final_hex.replace("{super_lamu_level}", "00000016")
                 final_hex = final_hex.replace("{lamu_id}", lamu_id_hex)
                 packet = Packet(final_hex)
+                client.set_last_sent_info(f"{label}#{index}/{len(packet_queue)} cmd={packet.cmd_id}")
                 if client.send_packet(packet):
                     success_count += 1
                     sent = True
