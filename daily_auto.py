@@ -1009,52 +1009,11 @@ def run_mlcs_task(client, mlcs_cfg, server_id, username, password):
         print(f"[*] 已跳过元素骑士（当前北京时间 {beijing_now.strftime('%H:%M')}，不在14:00-21:00窗口）")
         return True
 
-    level = str(mlcs_cfg.get("level", "")).strip()
-    if level not in ("激战蛋蛋", "沉睡奥丁", "莎士摩亚"):
-        return True
-
-    # 元素骑士关卡对应的编号映射（与 mole 保持一致）
+    # 固定流程：无尽深渊70次 + 莎士摩亚40次 + 恢复体力 + 每日奖励
     level_id_map = {
         "无尽深渊": "00000007",
         "莎士摩亚": "00000009",
-        "激战蛋蛋": "00000010",
-        "沉睡奥丁": "00000017",
     }
-
-    # 先获取元素骑士信息（cmd=231E），再按 mole 的规则计算挑战次数
-    client.ysqs_info_event.clear()
-    if not _run_packet_batch(
-        client,
-        ["00000000000000231E000000000000000000000000"],
-        50,
-        server_id,
-        username,
-        password,
-        "元素骑士-获取信息",
-    ):
-        return False
-    client.ysqs_info_event.wait(timeout=1.5)
-    with client.ysqs_info_lock:
-        ysqs_energy = client.ysqs_energy
-        ysqs_attack = client.ysqs_attack
-        ysqs_max_floor = client.ysqs_max_floor
-
-    hour = beijing_now.hour
-    can_fight_ssmy = ysqs_attack >= 2000
-    is_fight_ssmy = ysqs_energy > 0 and 10 <= hour < 21 and can_fight_ssmy
-    can_fight_wjsy = ysqs_max_floor >= 50 or ysqs_attack >= 7000
-    is_fight_wjsy = ysqs_energy > 0 and 13 <= hour < 21 and can_fight_wjsy
-    remain_times = ysqs_energy // 5
-
-    if can_fight_wjsy:
-        fight_times = 40 * int(is_fight_wjsy) if hour < 21 else remain_times
-    elif level == "莎士摩亚":
-        fight_times = min(40, remain_times) * int(is_fight_ssmy)
-    else:
-        fight_times = remain_times * 2 if ysqs_attack == 0 else remain_times
-
-    is_reward = is_fight_wjsy or fight_times >= 20
-
     packet_queue = [
         "00000000000000231A0000000000000000",          # 领悟技能
     ]
@@ -1065,27 +1024,18 @@ def run_mlcs_task(client, mlcs_cfg, server_id, username, password):
             packet_queue.append(f"00000000000000231D0000000000000000{level_hex}")
             packet_queue.append(f"0000000000000023210000000000000000{level_hex}")
 
-    append_fight_packets("无尽深渊", 80 * int(is_fight_wjsy))
-    append_fight_packets("莎士摩亚", 35 * int(is_fight_wjsy))
-    if is_fight_wjsy:
-        packet_queue.append("000000000000002319000000000000000000000000")
-    append_fight_packets("莎士摩亚", 15 * int(is_fight_wjsy))
-    append_fight_packets(level, fight_times)
-
-    if is_reward:
-        packet_queue.extend(
-            [
-                "000000000000002331000000000000000000000000",
-                "000000000000002331000000000000000000000001",
-            ]
-        )
-
-    print(
-        "[*] 元素骑士信息: "
-        f"energy={ysqs_energy} attack={ysqs_attack} max_floor={ysqs_max_floor} "
-        f"fight_times={fight_times} total_packets={len(packet_queue)}"
+    append_fight_packets("无尽深渊", 70)
+    append_fight_packets("莎士摩亚", 40)
+    packet_queue.append("000000000000002319000000000000000000000000")
+    packet_queue.extend(
+        [
+            "000000000000002331000000000000000000000000",
+            "000000000000002331000000000000000000000001",
+        ]
     )
-    return _run_packet_batch(client, packet_queue, 50, server_id, username, password, f"元素骑士-{level}")
+
+    print(f"[*] 元素骑士固定流程，总封包 {len(packet_queue)}")
+    return _run_packet_batch(client, packet_queue, 50, server_id, username, password, "元素骑士-固定流程")
 
 
 def is_mlcs_window_now():
