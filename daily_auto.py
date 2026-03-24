@@ -175,6 +175,11 @@ class Client:
         self.ranch_fish_event = threading.Event()
         self.map_info_event = threading.Event()
         self.last_ranch_fish_diag = None
+        self.ysqs_energy = 0
+        self.ysqs_attack = 0
+        self.ysqs_max_floor = 0
+        self.ysqs_info_lock = threading.Lock()
+        self.ysqs_info_event = threading.Event()
         self.recv_cmd_history = []
         self.recv_cmd_history_lock = threading.Lock()
         self.last_sent_info = ""
@@ -390,6 +395,12 @@ class Client:
                                 f"parsed={diag.get('parsed_count', 0)}"
                             )
                             self.ranch_fish_event.set()
+                        if packet.cmd_id == 3001 and len(packet.body) >= 72:
+                            with self.ysqs_info_lock:
+                                self.ysqs_energy = get_int(packet.body[28:32])
+                                self.ysqs_attack = get_int(packet.body[44:48])
+                                self.ysqs_max_floor = get_int(packet.body[68:72])
+                            self.ysqs_info_event.set()
                     else:
                         break
             except Exception:
@@ -1002,20 +1013,78 @@ def run_mlcs_task(client, mlcs_cfg, server_id, username, password):
     if level not in ("激战蛋蛋", "沉睡奥丁", "莎士摩亚"):
         return True
 
-    # 元素骑士关卡对应的编号映射
+    # 元素骑士关卡对应的编号映射（与 mole 保持一致）
     level_id_map = {
+        "无尽深渊": "00000007",
         "莎士摩亚": "00000009",
         "激战蛋蛋": "00000010",
         "沉睡奥丁": "00000017",
     }
-    level_hex = level_id_map[level]
-    
-    # 元素骑士每次挑战两个封包
-    challenge_packet_1 = f"00000000000000231D00000000000000{level_hex}F1"
-    challenge_packet_2 = f"0000000000000023210000000000000000{level_hex}F1"
-    
-    packet_queue = [challenge_packet_1, challenge_packet_2]
-    
+
+    # 先获取元素骑士信息（cmd=231E），再按 mole 的规则计算挑战次数
+    client.ysqs_info_event.clear()
+    if not _run_packet_batch(
+        client,
+        ["00000000000000231E000000000000000000000000"],
+        50,
+        server_id,
+        username,
+        password,
+        "元素骑士-获取信息",
+    ):
+        return False
+    client.ysqs_info_event.wait(timeout=1.5)
+    with client.ysqs_info_lock:
+        ysqs_energy = client.ysqs_energy
+        ysqs_attack = client.ysqs_attack
+        ysqs_max_floor = client.ysqs_max_floor
+
+    hour = beijing_now.hour
+    can_fight_ssmy = ysqs_attack >= 2000
+    is_fight_ssmy = ysqs_energy > 0 and 10 <= hour < 21 and can_fight_ssmy
+    can_fight_wjsy = ysqs_max_floor >= 50 or ysqs_attack >= 7000
+    is_fight_wjsy = ysqs_energy > 0 and 13 <= hour < 21 and can_fight_wjsy
+    remain_times = ysqs_energy // 5
+
+    if can_fight_wjsy:
+        fight_times = 40 * int(is_fight_wjsy) if hour < 21 else remain_times
+    elif level == "莎士摩亚":
+        fight_times = min(40, remain_times) * int(is_fight_ssmy)
+    else:
+        fight_times = remain_times * 2 if ysqs_attack == 0 else remain_times
+
+    is_reward = is_fight_wjsy or fight_times >= 20
+
+    packet_queue = [
+        "00000000000000231A0000000000000000",          # 领悟技能
+    ]
+
+    def append_fight_packets(level_name, times):
+        level_hex = level_id_map[level_name]
+        for _ in range(max(0, int(times))):
+            packet_queue.append(f"00000000000000231D0000000000000000{level_hex}")
+            packet_queue.append(f"0000000000000023210000000000000000{level_hex}")
+
+    append_fight_packets("无尽深渊", 80 * int(is_fight_wjsy))
+    append_fight_packets("莎士摩亚", 35 * int(is_fight_wjsy))
+    if is_fight_wjsy:
+        packet_queue.append("000000000000002319000000000000000000000000")
+    append_fight_packets("莎士摩亚", 15 * int(is_fight_wjsy))
+    append_fight_packets(level, fight_times)
+
+    if is_reward:
+        packet_queue.extend(
+            [
+                "000000000000002331000000000000000000000000",
+                "000000000000002331000000000000000000000001",
+            ]
+        )
+
+    print(
+        "[*] 元素骑士信息: "
+        f"energy={ysqs_energy} attack={ysqs_attack} max_floor={ysqs_max_floor} "
+        f"fight_times={fight_times} total_packets={len(packet_queue)}"
+    )
     return _run_packet_batch(client, packet_queue, 50, server_id, username, password, f"元素骑士-{level}")
 
 
