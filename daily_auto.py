@@ -909,13 +909,10 @@ def _run_packet_batch(
 
 
 def run_ranch_jump_task(client, interval_ms, server_id, username, password):
-    target_owner_hex = get_hex(user_id)
-    ranch_jump_token_hex = get_hex(user_id + 2000000000)
-
     jump_packets = [
-        "000000120000000192{user_id}00000000",
-        f"0000002A0000000191{{user_id}}00000000{target_owner_hex}00000002{ranch_jump_token_hex}000000000000000000000000",
-        f"0000001600000551{{user_id}}00000000{target_owner_hex}",
+        "000000127200000192{user_id}00000000",
+        "0000002A4300000191{user_id}00000000{user_id}0000000200000000000000000000000000000000",
+        "000000160300000551{user_id}00000000{user_id}",
     ]
     return _run_packet_batch(client, jump_packets, interval_ms, server_id, username, password, "牧场跳转")
 
