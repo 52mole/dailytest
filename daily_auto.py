@@ -1010,8 +1010,11 @@ def run_mlcs_task(client, mlcs_cfg, server_id, username, password):
         return True
 
     # 固定流程：无尽深渊70次 + 莎士摩亚40次 + 恢复体力 + 每日奖励
+    # 每日奖励后：根据配置关卡（激战蛋蛋/沉睡奥丁/莎士摩亚）追加44次
     level_id_map = {
         "无尽深渊": "00000007",
+        "激战蛋蛋": "00000010",
+        "沉睡奥丁": "00000017",
         "莎士摩亚": "00000009",
     }
     packet_queue = [
@@ -1033,6 +1036,13 @@ def run_mlcs_task(client, mlcs_cfg, server_id, username, password):
             "000000000000002331000000000000000000000001",
         ]
     )
+
+    selected_level = str(mlcs_cfg.get("level", "")).strip()
+    if selected_level in ("激战蛋蛋", "沉睡奥丁", "莎士摩亚"):
+        append_fight_packets(selected_level, 44)
+        print(f"[*] 元素骑士追加配置关卡: {selected_level} x44")
+    else:
+        print("[*] 元素骑士未配置追加关卡，已跳过44次追加挑战")
 
     print(f"[*] 元素骑士固定流程，总封包 {len(packet_queue)}")
     return _run_packet_batch(client, packet_queue, 50, server_id, username, password, "元素骑士-固定流程")
