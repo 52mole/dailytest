@@ -174,6 +174,8 @@ class Client:
         self.ranch_fish_lock = threading.Lock()
         self.ranch_fish_event = threading.Event()
         self.last_ranch_fish_diag = None
+        self.recv_cmd_history = []
+        self.recv_cmd_history_lock = threading.Lock()
 
     def connect_login_server(self):
         try:
@@ -358,6 +360,11 @@ class Client:
                         self.recv_buffer = self.recv_buffer[packet_len:]
                         packet = Packet(packet_data)
                         packet.decrypt()
+                        now_ts = time.time()
+                        with self.recv_cmd_history_lock:
+                            self.recv_cmd_history.append((now_ts, packet.cmd_id))
+                            # 仅保留最近120秒，避免历史无限增长
+                            self.recv_cmd_history = [item for item in self.recv_cmd_history if now_ts - item[0] <= 120]
                         if packet.cmd_id == 1366:
                             fish_ids, diag = self._parse_ranch_fish_ids(packet.body, return_diag=True)
                             with self.ranch_fish_lock:
@@ -397,6 +404,10 @@ class Client:
         if return_diag:
             return fish_ids, diag
         return fish_ids
+
+    def get_cmd_ids_in_window(self, start_ts, end_ts):
+        with self.recv_cmd_history_lock:
+            return [cmd_id for ts, cmd_id in self.recv_cmd_history if start_ts <= ts <= end_ts]
 
     def start_heartbeat(self):
         self.heartbeat_running = True
@@ -592,7 +603,7 @@ def _normalize_ranch_fish_feature_cfg(feature_cfg):
         "target_capacity": max(1, _to_int(feature_cfg.get("target_capacity", 30), 30)),
         "bait_type": str(feature_cfg.get("bait_type", "krill")).strip().lower() or "krill",
         "interval_ms": 50,
-        "fish_info_wait_sec": 3,
+        "fish_info_wait_sec": 10,
     }
 
 
@@ -898,7 +909,9 @@ def run_ranch_fish_task(client, ranch_fish_cfg, server_id, username, password, p
 
     fish_interval = max(0, _to_int(ranch_fish_cfg.get("interval_ms", 80), 80))
     jump_first = _to_bool(ranch_fish_cfg.get("jump_first", True), True)
-    wait_sec = max(1, _to_int(ranch_fish_cfg.get("fish_info_wait_sec", 3), 3))
+    # 鱼信息等待窗口提升到8-12秒区间，默认10秒
+    wait_sec = _to_int(ranch_fish_cfg.get("fish_info_wait_sec", 10), 10)
+    wait_sec = max(8, min(12, wait_sec))
     target_capacity = max(1, _to_int(ranch_fish_cfg.get("target_capacity", 30), 30))
     bait_type = str(ranch_fish_cfg.get("bait_type", "krill")).strip().lower()
 
@@ -920,6 +933,7 @@ def run_ranch_fish_task(client, ranch_fish_cfg, server_id, username, password, p
     max_rounds = 3
     for round_index in range(1, max_rounds + 1):
         client.ranch_fish_event.clear()
+        request_start_ts = time.time()
         if not _run_packet_batch(
             client,
             fish_info_packets,
@@ -935,6 +949,13 @@ def run_ranch_fish_task(client, ranch_fish_cfg, server_id, username, password, p
         client.ranch_fish_event.wait(timeout=float(wait_sec))
         with client.ranch_fish_lock:
             fish_ids = list(client.ranch_fish_ids)
+
+        probe_end_ts = request_start_ts + 5.0
+        received_cmd_ids = client.get_cmd_ids_in_window(request_start_ts, probe_end_ts)
+        if received_cmd_ids:
+            print(f"[*] 第{round_index}轮请求后5秒收到cmd_id: {received_cmd_ids}")
+        else:
+            print(f"[*] 第{round_index}轮请求后5秒收到cmd_id: []")
 
         diag = client.last_ranch_fish_diag or {}
         print(
