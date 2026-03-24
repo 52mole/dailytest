@@ -926,96 +926,23 @@ def run_ranch_fish_task(client, ranch_fish_cfg, server_id, username, password, p
 
     fish_interval = max(0, _to_int(ranch_fish_cfg.get("interval_ms", 80), 80))
     jump_first = _to_bool(ranch_fish_cfg.get("jump_first", True), True)
-    # 鱼信息等待窗口提升到8-12秒区间，默认10秒
-    wait_sec = _to_int(ranch_fish_cfg.get("fish_info_wait_sec", 10), 10)
-    wait_sec = max(8, min(12, wait_sec))
-    target_capacity = max(1, _to_int(ranch_fish_cfg.get("target_capacity", 30), 30))
-    bait_type = str(ranch_fish_cfg.get("bait_type", "krill")).strip().lower()
-
-    fish_info_packets = [
-        "00000016D000000556{user_id}0000000000000000",
-    ]
-
-    bait_packet_map = {
-        "krill": "00000016B900000555{user_id}0000000000136117",
-        "crayfish": "000000161000000555{user_id}0000000000136105",
-    }
-    bait_packet = bait_packet_map.get(bait_type, bait_packet_map["krill"])
 
     if jump_first and not pre_jumped:
         if not run_ranch_jump_task(client, fish_interval, server_id, username, password):
             return False
 
-    fish_ids = []
-    max_rounds = 3
-    for round_index in range(1, max_rounds + 1):
-        client.ranch_fish_event.clear()
-        request_start_ts = time.time()
-        if not _run_packet_batch(
-            client,
-            fish_info_packets,
-            fish_interval,
-            server_id,
-            username,
-            password,
-            f"获取鱼信息(第{round_index}轮)",
-            jump_to_ranch_on_reconnect=True,
-        ):
-            return False
-
-        client.ranch_fish_event.wait(timeout=float(wait_sec))
-        with client.ranch_fish_lock:
-            fish_ids = list(client.ranch_fish_ids)
-
-        probe_end_ts = request_start_ts + 5.0
-        received_cmd_ids = client.get_cmd_ids_in_window(request_start_ts, probe_end_ts)
-        if received_cmd_ids:
-            print(f"[*] 第{round_index}轮请求后5秒收到cmd_id: {received_cmd_ids}")
-        else:
-            print(f"[*] 第{round_index}轮请求后5秒收到cmd_id: []")
-
-        diag = client.last_ranch_fish_diag or {}
-        print(
-            f"[*] 第{round_index}轮鱼信息结果: "
-            f"fish_count={diag.get('fish_count', 0)} "
-            f"parsed={diag.get('parsed_count', len(fish_ids))} "
-            f"body_len={diag.get('body_len', 0)}"
-        )
-        if diag.get("head_hex"):
-            print(f"[*] 第{round_index}轮鱼信息头64: {diag['head_hex']}")
-
-        if fish_ids:
-            break
-
-        if round_index < max_rounds:
-            print(f"[*] 第{round_index}轮鱼信息为空，准备重试")
-            time.sleep(0.3)
-
-    print(f"[*] 鱼信息数量: {len(fish_ids)}")
-
-    harvest_packets = [f"000000000000000553000000000000000000000000{fish_id:08X}" for fish_id in fish_ids]
-    if harvest_packets:
-        if not _run_packet_batch(
-            client,
-            harvest_packets,
-            fish_interval,
-            server_id,
-            username,
-            password,
-            "自动捕捞",
-            jump_to_ranch_on_reconnect=True,
-        ):
-            return False
-
-    refill_packets = [bait_packet for _ in range(target_capacity)]
+    fish_packets = []
+    for _ in range(10):
+        fish_packets.append("00000012620000076C{user_id}00000000")
+        fish_packets.append("00000012E40000076E{user_id}00000000")
     if not _run_packet_batch(
         client,
-        refill_packets,
+        fish_packets,
         fish_interval,
         server_id,
         username,
         password,
-        "鱼塘补饵",
+        "渔网捕捞",
         jump_to_ranch_on_reconnect=True,
     ):
         return False
