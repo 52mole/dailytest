@@ -796,7 +796,17 @@ def execute_packet_queue(client, packet_queue, interval_ms, server_id, username,
     return True
 
 
-def _run_packet_batch(client, packet_queue, interval_ms, server_id, username, password, label, lamu_id_hex="00000000"):
+def _run_packet_batch(
+    client,
+    packet_queue,
+    interval_ms,
+    server_id,
+    username,
+    password,
+    label,
+    lamu_id_hex="00000000",
+    jump_to_ranch_on_reconnect=False,
+):
     if not packet_queue:
         print(f"[*] {label} 无封包，已跳过")
         return True
@@ -822,6 +832,11 @@ def _run_packet_batch(client, packet_queue, interval_ms, server_id, username, pa
                 if not relogin_ok:
                     retry_count += 1
                     continue
+                if jump_to_ranch_on_reconnect:
+                    print("[*] 重连后先跳转牧场")
+                    if not run_ranch_jump_task(client, interval_ms, server_id, username, password):
+                        retry_count += 1
+                        continue
 
             try:
                 final_hex = packet_hex.replace("{user_id}", get_hex(user_id))
@@ -895,11 +910,29 @@ def run_ranch_fish_task(client, ranch_fish_cfg, server_id, username, password, p
 
     harvest_packets = [f"000000000000000553000000000000000000000000{fish_id:08X}" for fish_id in fish_ids]
     if harvest_packets:
-        if not _run_packet_batch(client, harvest_packets, fish_interval, server_id, username, password, "自动捕捞"):
+        if not _run_packet_batch(
+            client,
+            harvest_packets,
+            fish_interval,
+            server_id,
+            username,
+            password,
+            "自动捕捞",
+            jump_to_ranch_on_reconnect=True,
+        ):
             return False
 
     refill_packets = [bait_packet for _ in range(target_capacity)]
-    if not _run_packet_batch(client, refill_packets, fish_interval, server_id, username, password, "鱼塘补饵"):
+    if not _run_packet_batch(
+        client,
+        refill_packets,
+        fish_interval,
+        server_id,
+        username,
+        password,
+        "鱼塘补饵",
+        jump_to_ranch_on_reconnect=True,
+    ):
         return False
 
     return True
@@ -938,6 +971,15 @@ def run_mlcs_task(client, mlcs_cfg, server_id, username, password):
     packet_queue = [challenge_packet_1, challenge_packet_2]
     
     return _run_packet_batch(client, packet_queue, 50, server_id, username, password, f"元素骑士-{level}")
+
+
+def is_mlcs_window_now():
+    beijing_tz = timezone(timedelta(hours=8))
+    beijing_now = datetime.now(timezone.utc).astimezone(beijing_tz)
+    now_minutes = beijing_now.hour * 60 + beijing_now.minute
+    window_start = 13 * 60 + 50  # 13:50
+    window_end = 15 * 60 + 10    # 15:10
+    return window_start <= now_minutes <= window_end, beijing_now
 
 
 def run_ranch_egg_task(client, ranch_egg_cfg, server_id, username, password):
@@ -980,7 +1022,16 @@ def run_ranch_egg_task(client, ranch_egg_cfg, server_id, username, password):
     if hatch_after_place:
         packet_queue.extend(hatch_packets)
 
-    return _run_packet_batch(client, packet_queue, egg_interval, server_id, username, password, "孵蛋收蛋放蛋")
+    return _run_packet_batch(
+        client,
+        packet_queue,
+        egg_interval,
+        server_id,
+        username,
+        password,
+        "孵蛋收蛋放蛋",
+        jump_to_ranch_on_reconnect=True,
+    )
 
 
 def run_lamu_daily_task(client, lamu_cfg, server_id, username, password):
@@ -1050,6 +1101,7 @@ def run_lamu_daily_task(client, lamu_cfg, server_id, username, password):
         return True
 
     all_packets = []
+    feed_lamu_ids = []
     for idx, item in enumerate(valid_lamus):
         lamu_id_hex = item["lamu_id_hex"]
         level_cfg = item["level_cfg"]
@@ -1075,13 +1127,19 @@ def run_lamu_daily_task(client, lamu_cfg, server_id, username, password):
             all_packets.append(f"0000000000000004B90000000000000000{lamu_id_hex}{curr_skill_hex}{curr_item}")
 
         if feed_after:
-            all_packets.append("0000001EE800000200{user_id}00000000000000010002BF2600000063")
-            all_packets.append(f"0000001E25000001F9{{user_id}}00000000{{user_id}}0000{lamu_id_hex}0002BF26")
+            feed_lamu_ids.append(lamu_id_hex)
 
         # 切换到下一只拉姆前，先发送1A66，下一只拉姆ID作为目标
         if idx + 1 < valid_count:
             next_lamu_id_hex = valid_lamus[idx + 1]["lamu_id_hex"]
             all_packets.append(f"0000001A66000000D7{{user_id}}0000000000{next_lamu_id_hex}00000001")
+
+    if feed_lamu_ids:
+        # 与旧封包流程保持一致：先发一次喂养道具，再分别给每只拉姆喂养
+        all_packets.append("0000001EE800000200{user_id}00000000000000010002BF2600000063")
+        for feed_lamu_id in feed_lamu_ids:
+            all_packets.append(f"0000001E25000001F9{{user_id}}00000000{{user_id}}{feed_lamu_id}0002BF26")
+            all_packets.append(f"0000001E25000001F9{{user_id}}00000000{{user_id}}{feed_lamu_id}0002BF26")
 
     return _run_packet_batch(
         client,
@@ -1219,6 +1277,15 @@ def process_account(account, daily_items):
         )
         if not login_ok:
             return False
+
+        mlcs_enabled = _to_bool(mlcs_cfg.get("enabled", False), False)
+        in_mlcs_window, beijing_now = is_mlcs_window_now()
+        if mlcs_enabled and in_mlcs_window:
+            print(f"[*] 命中元素骑士专用窗口（北京时间 {beijing_now.strftime('%H:%M')}），仅执行元素骑士流程")
+            if not run_mlcs_task(client, mlcs_cfg, server, username, password):
+                return False
+            print(f"[+] 账号 {username} 元素骑士专用流程完成")
+            return True
 
         if online_enabled and online_minutes > 0:
             print(f"[*] 挂机 {online_minutes} 分钟...")
