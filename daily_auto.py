@@ -917,7 +917,7 @@ def run_ranch_fish_task(client, ranch_fish_cfg, server_id, username, password, p
     bait_type = str(ranch_fish_cfg.get("bait_type", "krill")).strip().lower()
 
     fish_info_packets = [
-        "00000016F500000556{user_id}0000000000000000",
+        "00000016D000000556{user_id}0000000000000000",
     ]
 
     bait_packet_map = {
