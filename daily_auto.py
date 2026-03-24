@@ -610,13 +610,16 @@ def _normalize_lamu_daily_feature_cfg(feature_cfg):
 
 def _normalize_ranch_fish_feature_cfg(feature_cfg):
     feature_cfg = feature_cfg if isinstance(feature_cfg, dict) else {}
+    bait_count = _to_int(feature_cfg.get("bait_count", feature_cfg.get("target_capacity", 30)), 30)
+    bait_type = str(feature_cfg.get("bait_type", "krill")).strip().lower() or "krill"
+    if bait_type not in ("krill", "crayfish"):
+        bait_type = "krill"
     return {
         "enabled": _to_bool(feature_cfg.get("enabled", False), False),
         "jump_first": True,
-        "target_capacity": max(1, _to_int(feature_cfg.get("target_capacity", 30), 30)),
-        "bait_type": str(feature_cfg.get("bait_type", "krill")).strip().lower() or "krill",
+        "bait_count": max(1, bait_count),
+        "bait_type": bait_type,
         "interval_ms": 50,
-        "fish_info_wait_sec": 10,
     }
 
 
@@ -923,6 +926,8 @@ def run_ranch_fish_task(client, ranch_fish_cfg, server_id, username, password, p
 
     fish_interval = max(0, _to_int(ranch_fish_cfg.get("interval_ms", 80), 80))
     jump_first = _to_bool(ranch_fish_cfg.get("jump_first", True), True)
+    bait_type = str(ranch_fish_cfg.get("bait_type", "krill")).strip().lower() or "krill"
+    bait_count = max(1, _to_int(ranch_fish_cfg.get("bait_count", ranch_fish_cfg.get("target_capacity", 30)), 30))
 
     if jump_first and not pre_jumped:
         if not run_ranch_jump_task(client, fish_interval, server_id, username, password):
@@ -944,6 +949,38 @@ def run_ranch_fish_task(client, ranch_fish_cfg, server_id, username, password, p
     ):
         return False
 
+    if bait_type == "crayfish":
+        bait_packet = "000000161000000555{user_id}0000000000136105"
+    else:
+        bait_type = "krill"
+        buy_krill_packets = ["0000001AEC000001F5{user_id}00000000001361170000001E"]
+        if not _run_packet_batch(
+            client,
+            buy_krill_packets,
+            fish_interval,
+            server_id,
+            username,
+            password,
+            "购买磷虾",
+            jump_to_ranch_on_reconnect=True,
+        ):
+            return False
+        bait_packet = "00000016B900000555{user_id}0000000000136117"
+
+    bait_packets = [bait_packet for _ in range(bait_count)]
+    bait_label = "放磷虾" if bait_type == "krill" else "放小龙虾"
+    if not _run_packet_batch(
+        client,
+        bait_packets,
+        fish_interval,
+        server_id,
+        username,
+        password,
+        bait_label,
+        jump_to_ranch_on_reconnect=True,
+    ):
+        return False
+
     return True
 
 
@@ -955,10 +992,10 @@ def run_mlcs_task(client, mlcs_cfg, server_id, username, password):
     beijing_tz = timezone(timedelta(hours=8))
     beijing_now = datetime.now(timezone.utc).astimezone(beijing_tz)
     now_minutes = beijing_now.hour * 60 + beijing_now.minute
-    window_start = 13 * 60 + 50  # 13:50
-    window_end = 15 * 60 + 10    # 15:10
+    window_start = 14 * 60        # 14:00
+    window_end = 21 * 60          # 21:00
     if now_minutes < window_start or now_minutes > window_end:
-        print(f"[*] 已跳过元素骑士（当前北京时间 {beijing_now.strftime('%H:%M')}，不在13:50-15:10窗口）")
+        print(f"[*] 已跳过元素骑士（当前北京时间 {beijing_now.strftime('%H:%M')}，不在14:00-21:00窗口）")
         return True
 
     level = str(mlcs_cfg.get("level", "")).strip()
@@ -986,8 +1023,8 @@ def is_mlcs_window_now():
     beijing_tz = timezone(timedelta(hours=8))
     beijing_now = datetime.now(timezone.utc).astimezone(beijing_tz)
     now_minutes = beijing_now.hour * 60 + beijing_now.minute
-    window_start = 13 * 60 + 50  # 13:50
-    window_end = 15 * 60 + 10    # 15:10
+    window_start = 14 * 60        # 14:00
+    window_end = 21 * 60          # 21:00
     return window_start <= now_minutes <= window_end, beijing_now
 
 
