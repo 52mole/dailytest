@@ -921,14 +921,7 @@ def run_ranch_jump_task(client, interval_ms, server_id, username, password):
         f"0000002A0000000191{{user_id}}00000000{target_owner_hex}00000002{ranch_jump_token_hex}000000000000000000000000",
         f"0000001600000551{{user_id}}00000000{target_owner_hex}",
     ]
-    client.map_info_event.clear()
-    if not _run_packet_batch(client, jump_packets, interval_ms, server_id, username, password, "牧场跳转"):
-        return False
-    # 等待401地图信息回包，确认跳转落地后再继续后续高风险封包
-    if not client.map_info_event.wait(timeout=3.0):
-        print("[!] 牧场跳转后未收到401地图信息，判定未稳定进入牧场")
-        return False
-    return True
+    return _run_packet_batch(client, jump_packets, interval_ms, server_id, username, password, "牧场跳转")
 
 
 def run_ranch_fish_task(client, ranch_fish_cfg, server_id, username, password, pre_jumped=False):
