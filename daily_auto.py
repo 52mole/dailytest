@@ -67,6 +67,30 @@ def _normalize_hex8(value, default="00000000"):
     return s[-8:].rjust(8, "0")
 
 
+def _normalize_user_id_hex(value, default="00000000"):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return f"{int(value) & 0xFFFFFFFF:08X}"
+
+    text = str(value).strip()
+    if not text:
+        return default
+    if text.isdigit():
+        return f"{int(text) & 0xFFFFFFFF:08X}"
+
+    clean_hex = text.upper().replace("0X", "")
+    clean_hex = "".join(ch for ch in clean_hex if ch in "0123456789ABCDEF")
+    if not clean_hex:
+        return default
+    try:
+        return f"{int(clean_hex, 16) & 0xFFFFFFFF:08X}"
+    except Exception:
+        return default
+
+
 LAMU_LEVEL_GROUP = {
     "1-2": {"max": 1, "last": 1},
     "3-4": {"max": 2, "last": 1},
@@ -388,12 +412,6 @@ class Client:
                             with self.ranch_fish_lock:
                                 self.ranch_fish_ids = fish_ids
                             self.last_ranch_fish_diag = diag
-                            print(
-                                "[*] 鱼信息回包诊断: "
-                                f"body_len={diag.get('body_len', 0)} "
-                                f"fish_count={diag.get('fish_count', 0)} "
-                                f"parsed={diag.get('parsed_count', 0)}"
-                            )
                             self.ranch_fish_event.set()
                         if packet.cmd_id == 3001 and len(packet.body) >= 72:
                             with self.ysqs_info_lock:
@@ -668,6 +686,27 @@ def _normalize_mlcs_feature_cfg(feature_cfg):
     }
 
 
+def _normalize_wish_feature_cfg(feature_cfg):
+    feature_cfg = feature_cfg if isinstance(feature_cfg, dict) else {}
+    item = str(feature_cfg.get("item", "")).strip()
+    allowed_items = (
+        "组合蘑菇壁灯",
+        "古典落地灯",
+        "雪花",
+        "绿色蘑菇壁灯",
+        "绿茵壁纸",
+        "小杠铃",
+        "拉姆跳跳杆",
+        "红色小鼓",
+    )
+    if item not in allowed_items:
+        item = ""
+    return {
+        "target_user_id": _normalize_user_id_hex(feature_cfg.get("target_user_id", ""), "00000000"),
+        "item": item,
+    }
+
+
 def normalize_account_config(account):
     features = account.get("features", {}) if isinstance(account, dict) else {}
     normalized = {
@@ -684,6 +723,7 @@ def normalize_account_config(account):
             "ranch_fish": _normalize_ranch_fish_feature_cfg(features.get("ranch_fish", {})),
             "ranch_egg": _normalize_ranch_egg_feature_cfg(features.get("ranch_egg", {})),
             "mlcs": _normalize_mlcs_feature_cfg(features.get("mlcs", {})),
+            "wish": _normalize_wish_feature_cfg(features.get("wish", {})),
         },
         "super_lamu_packets": account.get("super_lamu_packets", []),
     }
@@ -798,10 +838,9 @@ def execute_packet_queue(client, packet_queue, interval_ms, server_id, username,
     global user_id
 
     if not packet_queue:
-        print("[-] 没有需要发送的封包")
-        return False
+        return True
 
-    print(f"[*] 本次待发送封包总数: {len(packet_queue)}")
+    print(f"[*] 每日封包: {len(packet_queue)}")
     success_count = 0
     fail_count = 0
 
@@ -810,7 +849,7 @@ def execute_packet_queue(client, packet_queue, interval_ms, server_id, username,
         sent = False
         while retry_count < 3 and not sent:
             if not client.connected:
-                print("[!] 连接中断，尝试重连...")
+                print("[!] 连接中断，重连中")
                 client.close()
                 time.sleep(2)
                 relogin_ok = (
@@ -841,12 +880,12 @@ def execute_packet_queue(client, packet_queue, interval_ms, server_id, username,
                 time.sleep(0.1)
 
         if not sent:
-            print(f"[!] 封包发送失败 {index}/{len(packet_queue)}")
+            print(f"[!] 发送失败 {index}/{len(packet_queue)}")
 
         if interval_ms > 0:
             time.sleep(interval_ms / 1000.0)
 
-    print(f"[*] 发送完成: 成功 {success_count} / 总 {len(packet_queue)} / 失败 {fail_count}")
+    print(f"[*] 每日封包完成: 成功 {success_count} / 总 {len(packet_queue)} / 失败 {fail_count}")
     time.sleep(5)
     return True
 
@@ -863,10 +902,8 @@ def _run_packet_batch(
     jump_to_ranch_on_reconnect=False,
 ):
     if not packet_queue:
-        print(f"[*] {label} 无封包，已跳过")
         return True
 
-    print(f"[*] 开始执行 {label}，共 {len(packet_queue)} 个封包")
     success_count = 0
     fail_count = 0
 
@@ -875,7 +912,7 @@ def _run_packet_batch(
         sent = False
         while retry_count < 3 and not sent:
             if not client.connected:
-                print("[!] 连接中断，尝试重连...")
+                print("[!] 连接中断，重连中")
                 client.close()
                 time.sleep(2)
                 relogin_ok = (
@@ -888,7 +925,6 @@ def _run_packet_batch(
                     retry_count += 1
                     continue
                 if jump_to_ranch_on_reconnect:
-                    print("[*] 重连后先跳转牧场")
                     if not run_ranch_jump_task(client, interval_ms, server_id, username, password):
                         retry_count += 1
                         continue
@@ -913,7 +949,7 @@ def _run_packet_batch(
                 time.sleep(0.1)
 
         if not sent:
-            print(f"[!] {label} 封包发送失败 {index}/{len(packet_queue)}")
+            print(f"[!] {label} 发送失败 {index}/{len(packet_queue)}")
 
         if interval_ms > 0:
             time.sleep(interval_ms / 1000.0)
@@ -999,18 +1035,14 @@ def run_mlcs_task(client, mlcs_cfg, server_id, username, password):
     if not _to_bool(mlcs_cfg.get("enabled", False), False):
         return True
 
-    # 元素骑士仅在北京时间时间段内执行，容忍 GitHub Actions 触发延迟
     beijing_tz = timezone(timedelta(hours=8))
     beijing_now = datetime.now(timezone.utc).astimezone(beijing_tz)
     now_minutes = beijing_now.hour * 60 + beijing_now.minute
     window_start = 14 * 60        # 14:00
-    window_end = 21 * 60          # 21:00
+    window_end = 16 * 60          # 16:00
     if now_minutes < window_start or now_minutes > window_end:
-        print(f"[*] 已跳过元素骑士（当前北京时间 {beijing_now.strftime('%H:%M')}，不在14:00-21:00窗口）")
         return True
 
-    # 固定流程：无尽深渊70次 + 莎士摩亚40次 + 恢复体力 + 每日奖励
-    # 每日奖励后：根据配置关卡（激战蛋蛋/沉睡奥丁/莎士摩亚）追加44次
     level_id_map = {
         "无尽深渊": "00000007",
         "激战蛋蛋": "00000010",
@@ -1018,7 +1050,7 @@ def run_mlcs_task(client, mlcs_cfg, server_id, username, password):
         "莎士摩亚": "00000009",
     }
     packet_queue = [
-        "00000000000000231A0000000000000000",          # 领悟技能
+        "00000000000000231A0000000000000000",
     ]
 
     def append_fight_packets(level_name, times):
@@ -1040,12 +1072,37 @@ def run_mlcs_task(client, mlcs_cfg, server_id, username, password):
     selected_level = str(mlcs_cfg.get("level", "")).strip()
     if selected_level in ("激战蛋蛋", "沉睡奥丁", "莎士摩亚"):
         append_fight_packets(selected_level, 44)
-        print(f"[*] 元素骑士追加配置关卡: {selected_level} x44")
-    else:
-        print("[*] 元素骑士未配置追加关卡，已跳过44次追加挑战")
 
     print(f"[*] 元素骑士固定流程，总封包 {len(packet_queue)}")
     return _run_packet_batch(client, packet_queue, 50, server_id, username, password, "元素骑士-固定流程")
+
+
+def run_wish_task(client, wish_cfg, server_id, username, password):
+    wish_item = str(wish_cfg.get("item", "")).strip()
+    if not wish_item:
+        return True
+
+    target_user_id = _normalize_user_id_hex(wish_cfg.get("target_user_id", ""), "00000000")
+    if target_user_id == "00000000":
+        return True
+
+    wish_packet_map = {
+        "组合蘑菇壁灯": "0000003C85000002EF{user_id}00000000{target_user_id}00027114E7BB84E59088E89891E88F87E5A381E781AF00000000000000000000000000000063",
+        "古典落地灯": "0000003C43000002EF{user_id}00000000{target_user_id}00027109E58FA4E585B8E890BDE59CB0E781AF00000000000000000000000000000000000063",
+        "雪花": "0000003C05000002EF{user_id}00000000{target_user_id}0002719DE99BAAE88AB100000000000000000000000000000000000000000000000000063",
+        "绿色蘑菇壁灯": "0000003CE0000002EF{user_id}00000000{target_user_id}0002710CE7BBBFE889B2E89891E88F87E5A381E781AF00000000000000000000000000000063",
+        "绿茵壁纸": "0000003C7D000002EF{user_id}00000000{target_user_id}00027149E7BBBFE88CB5E5A381E7BAB800000000000000000000000000000000000000000063",
+        "小杠铃": "0000003C23000002EF{user_id}00000000{target_user_id}000271CFE5B08FE69DA0E9938300000000000000000000000000000000000000000000000063",
+        "拉姆跳跳杆": "0000003CA4000002EF{user_id}00000000{target_user_id}000271D1E68B89E5A786E8B7B3E8B7B3E69D8600000000000000000000000000000000000063",
+        "红色小鼓": "0000003CF6000002EF{user_id}00000000{target_user_id}0002711CE7BAA2E889B2E5B08FE9BC9300000000000000000000000000000000000000000063",
+    }
+
+    packet_hex = wish_packet_map.get(wish_item, "")
+    if not packet_hex:
+        return True
+
+    packet_hex = packet_hex.replace("{target_user_id}", target_user_id)
+    return _run_packet_batch(client, [packet_hex], 50, server_id, username, password, f"许愿-{wish_item}")
 
 
 def is_mlcs_window_now():
@@ -1338,12 +1395,13 @@ def process_account(account, daily_items):
     ranch_fish_cfg = features.get("ranch_fish", {})
     ranch_egg_cfg = features.get("ranch_egg", {})
     mlcs_cfg = features.get("mlcs", {})
+    wish_cfg = features.get("wish", {})
     custom_packets = account.get("super_lamu_packets", [])
 
     online_enabled = _to_bool(online_cfg.get("enabled", True), True)
     online_minutes = max(0, _to_int(online_cfg.get("minutes", 0), 0))
 
-    print(f"\n[*] 账号: {username} | 服务器: {server}")
+    print(f"\n[*] 账号 {username} / 服{server}")
 
     client = Client()
 
@@ -1360,18 +1418,18 @@ def process_account(account, daily_items):
         mlcs_enabled = _to_bool(mlcs_cfg.get("enabled", False), False)
         in_mlcs_window, beijing_now = is_mlcs_window_now()
         if mlcs_enabled and in_mlcs_window:
-            print(f"[*] 命中元素骑士专用窗口（北京时间 {beijing_now.strftime('%H:%M')}），仅执行元素骑士流程")
+            print(f"[*] 元素骑士专用时段 {beijing_now.strftime('%H:%M')}")
             if not run_mlcs_task(client, mlcs_cfg, server, username, password):
                 return False
-            print(f"[+] 账号 {username} 元素骑士专用流程完成")
+            print(f"[+] {username} 完成")
             return True
 
         if online_enabled and online_minutes > 0:
-            print(f"[*] 挂机 {online_minutes} 分钟...")
+            print(f"[*] 挂机 {online_minutes} 分钟")
             end_ts = time.time() + int(online_minutes * 60)
             while time.time() < end_ts:
                 if not client.connected:
-                    print("[!] 挂机期间掉线，尝试重连")
+                    print("[!] 挂机掉线，重连中")
                     client.close()
                     relogin_ok = (
                         client.connect_login_server()
@@ -1383,9 +1441,6 @@ def process_account(account, daily_items):
                         time.sleep(5)
                         continue
                 time.sleep(1)
-        elif not online_enabled:
-            print("[*] 已跳过挂机（online.enabled=false）")
-
         if (
             _to_bool(gift_cfg.get("enabled", True), True)
             and online_enabled
@@ -1400,9 +1455,6 @@ def process_account(account, daily_items):
             lamu_id_hex = _normalize_hex8(lamu_daily_cfg.get("lamu_id", "00000000"), "00000000")
             if not execute_packet_queue(client, packet_queue, interval_ms, server, username, password, lamu_id_hex=lamu_id_hex):
                 return False
-        else:
-            print("[*] 已跳过每日封包（daily.enabled=false）")
-
         if not run_lamu_daily_task(client, lamu_daily_cfg, server, username, password):
             return False
 
@@ -1421,13 +1473,13 @@ def process_account(account, daily_items):
 
             if not run_ranch_egg_task(client, ranch_egg_cfg, server, username, password):
                 return False
-        else:
-            print("[*] 已跳过牧场总流程（ranch.enabled=false）")
+        if not run_wish_task(client, wish_cfg, server, username, password):
+            return False
 
         if not run_mlcs_task(client, mlcs_cfg, server, username, password):
             return False
 
-        print(f"[+] 账号 {username} 执行完成")
+        print(f"[+] {username} 执行完成")
         return True
 
     except Exception as exc:
@@ -1439,17 +1491,13 @@ def process_account(account, daily_items):
 
 
 def process_account_entry(index, total, account, daily_items):
-    print(f"\n[{index}/{total}] 开始处理")
+    print(f"\n[{index}/{total}]")
     success = process_account(account, daily_items)
     if not success:
         raise SystemExit(1)
 
 
 def main():
-    print("=" * 50)
-    print("摩尔庄园每日任务自动执行")
-    print("=" * 50)
-
     accounts = load_accounts()
     if not accounts:
         print("[-] 未找到可用账号配置")
@@ -1457,7 +1505,6 @@ def main():
 
     daily_items = load_daily_packets()
     if not daily_items:
-        print("[!] 未加载到每日封包，仅会发送账号内 custom_packets")
         daily_items = {}
 
     success_count = 0
@@ -1473,9 +1520,7 @@ def main():
         if p.exitcode == 0:
             success_count += 1
 
-    print("=" * 50)
     print(f"执行完成: {success_count}/{len(accounts)}")
-    print("=" * 50)
     return 0 if success_count == len(accounts) else 1
 
 
