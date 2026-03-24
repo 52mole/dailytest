@@ -894,11 +894,12 @@ def _run_packet_batch(
 
 
 def run_ranch_jump_task(client, interval_ms, server_id, username, password):
-    ranch_map_hex = "00000002"
+    target_owner_hex = get_hex(user_id)
+
     jump_packets = [
         "000000120000000192{user_id}00000000",
-        f"0000002A0000000191{{user_id}}00000000{ranch_map_hex}00000000{{user_id}}0000001F0000000000000000",
-        f"0000001A0000000196{{user_id}}00000000{ranch_map_hex}00000000",
+        f"0000002A0000000191{{user_id}}00000000{target_owner_hex}0000000200000000000000000000000000000000",
+        f"0000001600000551{{user_id}}00000000{target_owner_hex}",
     ]
     return _run_packet_batch(client, jump_packets, interval_ms, server_id, username, password, "牧场跳转")
 
