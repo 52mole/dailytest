@@ -173,6 +173,7 @@ class Client:
         self.ranch_fish_ids = []
         self.ranch_fish_lock = threading.Lock()
         self.ranch_fish_event = threading.Event()
+        self.map_info_event = threading.Event()
         self.last_ranch_fish_diag = None
         self.recv_cmd_history = []
         self.recv_cmd_history_lock = threading.Lock()
@@ -375,6 +376,8 @@ class Client:
                             self.recv_cmd_history.append((now_ts, packet.cmd_id))
                             # 仅保留最近120秒，避免历史无限增长
                             self.recv_cmd_history = [item for item in self.recv_cmd_history if now_ts - item[0] <= 120]
+                        if packet.cmd_id == 401:
+                            self.map_info_event.set()
                         if packet.cmd_id == 1366:
                             fish_ids, diag = self._parse_ranch_fish_ids(packet.body, return_diag=True)
                             with self.ranch_fish_lock:
@@ -917,7 +920,14 @@ def run_ranch_jump_task(client, interval_ms, server_id, username, password):
         f"0000002A0000000191{{user_id}}00000000{target_owner_hex}0000000200000000000000000000000000000000",
         f"0000001600000551{{user_id}}00000000{target_owner_hex}",
     ]
-    return _run_packet_batch(client, jump_packets, interval_ms, server_id, username, password, "牧场跳转")
+    client.map_info_event.clear()
+    if not _run_packet_batch(client, jump_packets, interval_ms, server_id, username, password, "牧场跳转"):
+        return False
+    # 等待401地图信息回包，确认跳转落地后再继续后续高风险封包
+    if not client.map_info_event.wait(timeout=3.0):
+        print("[!] 牧场跳转后未收到401地图信息，判定未稳定进入牧场")
+        return False
+    return True
 
 
 def run_ranch_fish_task(client, ranch_fish_cfg, server_id, username, password, pre_jumped=False):
@@ -949,6 +959,10 @@ def run_ranch_fish_task(client, ranch_fish_cfg, server_id, username, password, p
     fish_ids = []
     max_rounds = 3
     for round_index in range(1, max_rounds + 1):
+        # 关键约束：每轮发1366前都先确认在牧场，避免因场景不对触发掉线
+        if not run_ranch_jump_task(client, fish_interval, server_id, username, password):
+            return False
+
         client.ranch_fish_event.clear()
         request_start_ts = time.time()
         if not _run_packet_batch(
