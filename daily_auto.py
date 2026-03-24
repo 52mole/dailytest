@@ -173,6 +173,8 @@ class Client:
         self.ranch_fish_ids = []
         self.ranch_fish_lock = threading.Lock()
         self.ranch_fish_event = threading.Event()
+        self.ranch_info_event = threading.Event()
+        self.last_ranch_fish_diag = None
 
     def connect_login_server(self):
         try:
@@ -357,10 +359,19 @@ class Client:
                         self.recv_buffer = self.recv_buffer[packet_len:]
                         packet = Packet(packet_data)
                         packet.decrypt()
+                        if packet.cmd_id == 1361:
+                            self.ranch_info_event.set()
                         if packet.cmd_id == 1366:
-                            fish_ids = self._parse_ranch_fish_ids(packet.body)
+                            fish_ids, diag = self._parse_ranch_fish_ids(packet.body, return_diag=True)
                             with self.ranch_fish_lock:
                                 self.ranch_fish_ids = fish_ids
+                            self.last_ranch_fish_diag = diag
+                            print(
+                                "[*] 鱼信息回包诊断: "
+                                f"body_len={diag.get('body_len', 0)} "
+                                f"fish_count={diag.get('fish_count', 0)} "
+                                f"parsed={diag.get('parsed_count', 0)}"
+                            )
                             self.ranch_fish_event.set()
                     else:
                         break
@@ -369,9 +380,10 @@ class Client:
                 break
 
     @staticmethod
-    def _parse_ranch_fish_ids(body):
+    def _parse_ranch_fish_ids(body, return_diag=False):
         fish_ids = []
         body_hex = body.hex().upper()
+        fish_count = 0
         if len(body_hex) >= 16:
             fish_count = int(body_hex[14:16], 16)
             offset = 16
@@ -379,6 +391,14 @@ class Client:
                 if offset + 8 <= len(body_hex):
                     fish_ids.append(int(body_hex[offset:offset + 8], 16))
                 offset += 160
+        diag = {
+            "body_len": len(body),
+            "fish_count": fish_count,
+            "parsed_count": len(fish_ids),
+            "head_hex": body_hex[:64],
+        }
+        if return_diag:
+            return fish_ids, diag
         return fish_ids
 
     def start_heartbeat(self):
@@ -874,6 +894,21 @@ def run_ranch_jump_task(client, interval_ms, server_id, username, password):
     return _run_packet_batch(client, jump_packets, interval_ms, server_id, username, password, "牧场跳转")
 
 
+def run_ranch_prepare_task(client, interval_ms, server_id, username, password, wait_sec=2):
+    # 参考实测抓包：进入牧场后先触发一次牧场总体信息与渔网状态，可提高后续鱼塘/孵蛋成功率
+    prepare_packets = [
+        "000000162200000551{user_id}00000000{user_id}",
+        "00000012080000076D{user_id}00000000",
+    ]
+
+    client.ranch_info_event.clear()
+    if not _run_packet_batch(client, prepare_packets, interval_ms, server_id, username, password, "牧场预热"):
+        return False
+
+    client.ranch_info_event.wait(timeout=float(max(1, wait_sec)))
+    return True
+
+
 def run_ranch_fish_task(client, ranch_fish_cfg, server_id, username, password, pre_jumped=False):
     if not _to_bool(ranch_fish_cfg.get("enabled", False), False):
         return True
@@ -898,13 +933,38 @@ def run_ranch_fish_task(client, ranch_fish_cfg, server_id, username, password, p
         if not run_ranch_jump_task(client, fish_interval, server_id, username, password):
             return False
 
-    client.ranch_fish_event.clear()
-    if not _run_packet_batch(client, fish_info_packets, fish_interval, server_id, username, password, "获取鱼信息"):
+    if not run_ranch_prepare_task(client, fish_interval, server_id, username, password, wait_sec=2):
         return False
 
-    client.ranch_fish_event.wait(timeout=float(wait_sec))
-    with client.ranch_fish_lock:
-        fish_ids = list(client.ranch_fish_ids)
+    fish_ids = []
+    max_rounds = 3
+    for round_index in range(1, max_rounds + 1):
+        client.ranch_fish_event.clear()
+        if not _run_packet_batch(client, fish_info_packets, fish_interval, server_id, username, password, f"获取鱼信息(第{round_index}轮)"):
+            return False
+
+        client.ranch_fish_event.wait(timeout=float(wait_sec))
+        with client.ranch_fish_lock:
+            fish_ids = list(client.ranch_fish_ids)
+
+        diag = client.last_ranch_fish_diag or {}
+        print(
+            f"[*] 第{round_index}轮鱼信息结果: "
+            f"fish_count={diag.get('fish_count', 0)} "
+            f"parsed={diag.get('parsed_count', len(fish_ids))} "
+            f"body_len={diag.get('body_len', 0)}"
+        )
+        if diag.get("head_hex"):
+            print(f"[*] 第{round_index}轮鱼信息头64: {diag['head_hex']}")
+
+        if fish_ids:
+            break
+
+        if round_index < max_rounds:
+            print(f"[*] 第{round_index}轮鱼信息为空，准备重试")
+            if not run_ranch_prepare_task(client, fish_interval, server_id, username, password, wait_sec=1):
+                return False
+            time.sleep(0.3)
 
     print(f"[*] 鱼信息数量: {len(fish_ids)}")
 
@@ -1021,6 +1081,9 @@ def run_ranch_egg_task(client, ranch_egg_cfg, server_id, username, password):
 
     if hatch_after_place:
         packet_queue.extend(hatch_packets)
+
+    if not run_ranch_prepare_task(client, egg_interval, server_id, username, password, wait_sec=2):
+        return False
 
     return _run_packet_batch(
         client,
