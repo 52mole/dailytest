@@ -861,11 +861,7 @@ def _run_packet_batch(
         sent = False
         while retry_count < 3 and not sent:
             if not client.connected:
-                last_info = client.get_last_sent_info()
-                if last_info:
-                    print(f"[!] 连接中断，尝试重连... (最近发送: {last_info})")
-                else:
-                    print("[!] 连接中断，尝试重连...")
+                print("[!] 连接中断，尝试重连...")
                 client.close()
                 time.sleep(2)
                 relogin_ok = (
@@ -953,10 +949,6 @@ def run_ranch_fish_task(client, ranch_fish_cfg, server_id, username, password, p
     fish_ids = []
     max_rounds = 3
     for round_index in range(1, max_rounds + 1):
-        # 关键约束：每轮发1366前都先确认在牧场，避免因场景不对触发掉线
-        if not run_ranch_jump_task(client, fish_interval, server_id, username, password):
-            return False
-
         client.ranch_fish_event.clear()
         request_start_ts = time.time()
         if not _run_packet_batch(
@@ -1082,6 +1074,10 @@ def run_ranch_egg_task(client, ranch_egg_cfg, server_id, username, password):
     egg_interval = max(0, _to_int(ranch_egg_cfg.get("interval_ms", 80), 80))
     mode = str(ranch_egg_cfg.get("mode", "turkey3")).strip().lower()
     hatch_after_place = _to_bool(ranch_egg_cfg.get("hatch_after_place", False), False)
+
+    # 孵蛋前先跳转牧场确认场景
+    if not run_ranch_jump_task(client, egg_interval, server_id, username, password):
+        return False
 
     collect_packets = [
         "00000016A000000788{user_id}0000000000000000",
