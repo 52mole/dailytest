@@ -914,10 +914,11 @@ def _run_packet_batch(
 
 def run_ranch_jump_task(client, interval_ms, server_id, username, password):
     target_owner_hex = get_hex(user_id)
+    ranch_jump_token_hex = get_hex(user_id + 2000000000)
 
     jump_packets = [
         "000000120000000192{user_id}00000000",
-        f"0000002A0000000191{{user_id}}00000000{target_owner_hex}0000000200000000000000000000000000000000",
+        f"0000002A0000000191{{user_id}}00000000{target_owner_hex}00000002{ranch_jump_token_hex}000000000000000000000000",
         f"0000001600000551{{user_id}}00000000{target_owner_hex}",
     ]
     client.map_info_event.clear()
