@@ -707,6 +707,24 @@ def _normalize_wish_feature_cfg(feature_cfg):
     }
 
 
+def _normalize_super_lamu_level(value):
+    level = _to_int(value, 0)
+    if 1 <= level <= 8:
+        return level
+    return 0
+
+
+def _build_super_lamu_packets(level):
+    level = _normalize_super_lamu_level(level)
+    if level == 0:
+        return []
+    hex_level = f"{level + 22:08X}"
+    return [
+        "00000000000000277500000000000000003B9ACA16",
+        f"0000000000000027760000000000000000{hex_level}",
+    ]
+
+
 def normalize_account_config(account):
     features = account.get("features", {}) if isinstance(account, dict) else {}
     normalized = {
@@ -725,6 +743,7 @@ def normalize_account_config(account):
             "mlcs": _normalize_mlcs_feature_cfg(features.get("mlcs", {})),
             "wish": _normalize_wish_feature_cfg(features.get("wish", {})),
         },
+        "super_lamu_level": _normalize_super_lamu_level(account.get("super_lamu_level", 0)),
         "super_lamu_packets": account.get("super_lamu_packets", []),
     }
 
@@ -1110,7 +1129,7 @@ def is_mlcs_window_now():
     beijing_now = datetime.now(timezone.utc).astimezone(beijing_tz)
     now_minutes = beijing_now.hour * 60 + beijing_now.minute
     window_start = 14 * 60        # 14:00
-    window_end = 16 * 60          # 16:00
+    window_end = 21 * 60          # 21:00
     return window_start <= now_minutes <= window_end, beijing_now
 
 
@@ -1381,6 +1400,62 @@ def load_accounts():
     return []
 
 
+def _account_task_items(account, in_mlcs_window):
+    features = account.get("features", {}) if isinstance(account, dict) else {}
+    online_cfg = features.get("online", {})
+    gift_cfg = features.get("online_gift", {})
+    daily_cfg = features.get("daily", {})
+    lamu_cfg = features.get("lamu_daily", {})
+    ranch_cfg = features.get("ranch", {})
+    ranch_fish_cfg = features.get("ranch_fish", {})
+    ranch_egg_cfg = features.get("ranch_egg", {})
+    mlcs_cfg = features.get("mlcs", {})
+    wish_cfg = features.get("wish", {})
+
+    mlcs_enabled = _to_bool(mlcs_cfg.get("enabled", False), False)
+    if in_mlcs_window:
+        if mlcs_enabled:
+            return ["元素骑士"]
+        return ["跳过"]
+
+    items = []
+
+    online_enabled = _to_bool(online_cfg.get("enabled", True), True)
+    online_minutes = max(0, _to_int(online_cfg.get("minutes", 0), 0))
+    if online_enabled and online_minutes > 0:
+        items.append(f"挂机{online_minutes}m")
+        if (
+            _to_bool(gift_cfg.get("enabled", True), True)
+            and online_minutes >= _to_int(gift_cfg.get("min_minutes", 100), 100)
+        ):
+            items.append("在线礼包")
+
+    if _to_bool(daily_cfg.get("enabled", True), True):
+        items.append("每日任务")
+
+    if _to_bool(lamu_cfg.get("enabled", False), False):
+        items.append("拉姆变身值")
+        items.append("拉姆喂养")
+
+    if _to_bool(ranch_cfg.get("enabled", False), False):
+        if _to_bool(ranch_fish_cfg.get("enabled", False), False):
+            items.append("渔网补饵")
+        if _to_bool(ranch_egg_cfg.get("enabled", False), False):
+            items.append("孵蛋")
+
+    wish_item = str(wish_cfg.get("item", "")).strip()
+    wish_target = _normalize_user_id_hex(wish_cfg.get("target_user_id", ""), "00000000")
+    if wish_item and wish_target != "00000000":
+        items.append(f"许愿:{wish_item}")
+
+    if mlcs_enabled:
+        items.append("元素骑士")
+
+    if not items:
+        items.append("无")
+    return items
+
+
 def process_account(account, daily_items):
     username = account["username"]
     password = account["password"]
@@ -1396,7 +1471,9 @@ def process_account(account, daily_items):
     ranch_egg_cfg = features.get("ranch_egg", {})
     mlcs_cfg = features.get("mlcs", {})
     wish_cfg = features.get("wish", {})
+    super_lamu_level = _normalize_super_lamu_level(account.get("super_lamu_level", 0))
     custom_packets = account.get("super_lamu_packets", [])
+    custom_packets = _build_super_lamu_packets(super_lamu_level) + (custom_packets if isinstance(custom_packets, list) else [])
 
     online_enabled = _to_bool(online_cfg.get("enabled", True), True)
     online_minutes = max(0, _to_int(online_cfg.get("minutes", 0), 0))
@@ -1507,21 +1584,76 @@ def main():
     if not daily_items:
         daily_items = {}
 
-    success_count = 0
+    in_mlcs_window, beijing_now = is_mlcs_window_now()
+    run_accounts = accounts
+    skipped_accounts = []
+    if in_mlcs_window:
+        run_accounts = []
+        for account in accounts:
+            features = account.get("features", {}) if isinstance(account, dict) else {}
+            mlcs_cfg = features.get("mlcs", {}) if isinstance(features, dict) else {}
+            if _to_bool(mlcs_cfg.get("enabled", False), False):
+                run_accounts.append(account)
+            else:
+                skipped_accounts.append(account)
+
+    if in_mlcs_window:
+        print(f"[*] 元素骑士时段 {beijing_now.strftime('%H:%M')} | 执行 {len(run_accounts)} | 跳过 {len(skipped_accounts)}")
+
+    account_items = [_account_task_items(account, in_mlcs_window) for account in accounts]
+    status_by_index = ["待执行" for _ in accounts]
+    if in_mlcs_window:
+        for idx, account in enumerate(accounts):
+            features = account.get("features", {}) if isinstance(account, dict) else {}
+            mlcs_cfg = features.get("mlcs", {}) if isinstance(features, dict) else {}
+            if not _to_bool(mlcs_cfg.get("enabled", False), False):
+                status_by_index[idx] = "跳过"
+
+    if not run_accounts:
+        print(f"汇总: 总账号 {len(accounts)} | 执行 0 | 跳过 {len(skipped_accounts)} | 成功 0 | 失败 0")
+        for idx, account in enumerate(accounts, 1):
+            username = account.get("username", "")
+            item_text = "、".join(account_items[idx - 1])
+            print(f"{idx}. {username} | {status_by_index[idx - 1]} | {item_text}")
+        return 0
+
+    success_accounts = []
+    failed_accounts = []
     processes = []
-    total = len(accounts)
-    for i, account in enumerate(accounts, 1):
+    total = len(run_accounts)
+    run_entries = []
+    run_ids = {id(account) for account in run_accounts}
+    for idx, account in enumerate(accounts):
+        if id(account) in run_ids:
+            run_entries.append((idx, account))
+
+    for i, (idx, account) in enumerate(run_entries, 1):
         p = Process(target=process_account_entry, args=(i, total, account, daily_items))
         p.start()
-        processes.append(p)
+        processes.append((p, idx, account.get("username", "")))
 
-    for p in processes:
+    for p, idx, username in processes:
         p.join()
         if p.exitcode == 0:
-            success_count += 1
+            success_accounts.append(username)
+            status_by_index[idx] = "成功"
+        else:
+            failed_accounts.append(username)
+            status_by_index[idx] = "失败"
 
-    print(f"执行完成: {success_count}/{len(accounts)}")
-    return 0 if success_count == len(accounts) else 1
+    print(
+        f"汇总: 总账号 {len(accounts)} | 执行 {len(run_accounts)} | 跳过 {len(skipped_accounts)} "
+        f"| 成功 {len(success_accounts)} | 失败 {len(failed_accounts)}"
+    )
+    if failed_accounts:
+        print("失败账号: " + "、".join(failed_accounts))
+
+    for idx, account in enumerate(accounts, 1):
+        username = account.get("username", "")
+        item_text = "、".join(account_items[idx - 1])
+        print(f"{idx}. {username} | {status_by_index[idx - 1]} | {item_text}")
+
+    return 0 if len(failed_accounts) == 0 else 1
 
 
 if __name__ == "__main__":
