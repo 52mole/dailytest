@@ -919,6 +919,7 @@ def _run_packet_batch(
     label,
     lamu_id_hex="00000000",
     jump_to_ranch_on_reconnect=False,
+    require_all_success=False,
 ):
     if not packet_queue:
         return True
@@ -974,6 +975,8 @@ def _run_packet_batch(
             time.sleep(interval_ms / 1000.0)
 
     print(f"[*] {label} 完成: 成功 {success_count} / 总 {len(packet_queue)} / 失败 {fail_count}")
+    if require_all_success and success_count < len(packet_queue):
+        return False
     return True
 
 
@@ -1121,7 +1124,16 @@ def run_wish_task(client, wish_cfg, server_id, username, password):
         return True
 
     packet_hex = packet_hex.replace("{target_user_id}", target_user_id)
-    return _run_packet_batch(client, [packet_hex], 50, server_id, username, password, f"许愿-{wish_item}")
+    return _run_packet_batch(
+        client,
+        [packet_hex],
+        50,
+        server_id,
+        username,
+        password,
+        f"许愿-{wish_item}",
+        require_all_success=True,
+    )
 
 
 def is_mlcs_window_now():
