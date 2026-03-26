@@ -1141,7 +1141,7 @@ def is_mlcs_window_now():
     beijing_now = datetime.now(timezone.utc).astimezone(beijing_tz)
     now_minutes = beijing_now.hour * 60 + beijing_now.minute
     window_start = 14 * 60        # 14:00
-    window_end = 21 * 60          # 21:00
+    window_end = 16 * 60          # 16:00
     return window_start <= now_minutes <= window_end, beijing_now
 
 
