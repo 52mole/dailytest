@@ -14,7 +14,7 @@ from struct import pack, unpack
 
 SECRET_KEY = b"^FStx,wl6NquAVRF@f%6\x00"
 BEIJING_TZ = timezone(timedelta(hours=8))
-MLCS_WINDOW_START_MINUTES = 15 * 60
+MLCS_WINDOW_START_MINUTES = 14 * 60
 MLCS_WINDOW_END_MINUTES = 16 * 60
 
 serial_num = 0
@@ -274,7 +274,7 @@ class Client:
             server_select_packet.extend(bytes(205 - len(server_select_packet)))
             self.login_socket.send(bytes(server_select_packet))
 
-            self.login_socket.settimeout(2.0)
+            self.login_socket.settimeout(5.0)
             final_resp = bytearray()
             try:
                 while True:
