@@ -867,6 +867,7 @@ def execute_packet_queue(client, packet_queue, interval_ms, server_id, username,
         retry_count = 0
         sent = False
         while retry_count < 3 and not sent:
+            attempt_no = retry_count + 1
             if not client.connected:
                 print("[!] 连接中断，重连中")
                 client.close()
@@ -931,6 +932,7 @@ def _run_packet_batch(
         retry_count = 0
         sent = False
         while retry_count < 3 and not sent:
+            attempt_no = retry_count + 1
             if not client.connected:
                 print("[!] 连接中断，重连中")
                 client.close()
@@ -960,10 +962,15 @@ def _run_packet_batch(
                     success_count += 1
                     sent = True
                 else:
+                    print(
+                        f"[!] {label} 发送返回失败, 重试 {attempt_no}/3, "
+                        f"connected={client.connected}, last={client.get_last_sent_info()}"
+                    )
                     fail_count += 1
                     retry_count += 1
                     time.sleep(0.1)
-            except Exception:
+            except Exception as exc:
+                print(f"[!] {label} 发送异常, 重试 {attempt_no}/3: {type(exc).__name__}: {exc}")
                 fail_count += 1
                 retry_count += 1
                 time.sleep(0.1)
@@ -1060,7 +1067,7 @@ def run_mlcs_task(client, mlcs_cfg, server_id, username, password):
     beijing_tz = timezone(timedelta(hours=8))
     beijing_now = datetime.now(timezone.utc).astimezone(beijing_tz)
     now_minutes = beijing_now.hour * 60 + beijing_now.minute
-    window_start = 15 * 60        # 14:00
+    window_start = 15 * 60        # 15:00
     window_end = 16 * 60          # 16:00
     if now_minutes < window_start or now_minutes > window_end:
         return True
@@ -1111,7 +1118,7 @@ def run_wish_task(client, wish_cfg, server_id, username, password):
     wish_packet_map = {
         "组合蘑菇壁灯": "0000003C85000002EF{user_id}00000000{target_user_id}00027114E7BB84E59088E89891E88F87E5A381E781AF00000000000000000000000000000063",
         "古典落地灯": "0000003C43000002EF{user_id}00000000{target_user_id}00027109E58FA4E585B8E890BDE59CB0E781AF00000000000000000000000000000000000063",
-        "雪花": "0000003C05000002EF{user_id}00000000{target_user_id}0002719DE99BAAE88AB100000000000000000000000000000000000000000000000000063",
+        "雪花": "0000003C05000002EF{user_id}00000000{target_user_id}0002719DE99BAAE88AB1000000000000000000000000000000000000000000000000000063",
         "绿色蘑菇壁灯": "0000003CE0000002EF{user_id}00000000{target_user_id}0002710CE7BBBFE889B2E89891E88F87E5A381E781AF00000000000000000000000000000063",
         "绿茵壁纸": "0000003C7D000002EF{user_id}00000000{target_user_id}00027149E7BBBFE88CB5E5A381E7BAB800000000000000000000000000000000000000000063",
         "小杠铃": "0000003C23000002EF{user_id}00000000{target_user_id}000271CFE5B08FE69DA0E9938300000000000000000000000000000000000000000000000063",
@@ -1124,6 +1131,17 @@ def run_wish_task(client, wish_cfg, server_id, username, password):
         return True
 
     packet_hex = packet_hex.replace("{target_user_id}", target_user_id)
+    # 发送前快速校验，避免模板问题在重试里被吞掉。
+    preview_hex = packet_hex.replace("{user_id}", get_hex(user_id))
+    if len(preview_hex) % 2 != 0:
+        print(f"[!] 许愿-{wish_item} 模板长度异常: {len(preview_hex)}(需为偶数)")
+        return False
+    try:
+        bytes.fromhex(preview_hex)
+    except Exception as exc:
+        print(f"[!] 许愿-{wish_item} 模板解析失败: {type(exc).__name__}: {exc}")
+        return False
+
     return _run_packet_batch(
         client,
         [packet_hex],
@@ -1140,7 +1158,7 @@ def is_mlcs_window_now():
     beijing_tz = timezone(timedelta(hours=8))
     beijing_now = datetime.now(timezone.utc).astimezone(beijing_tz)
     now_minutes = beijing_now.hour * 60 + beijing_now.minute
-    window_start = 15 * 60        # 14:00
+    window_start = 15 * 60        # 15:00
     window_end = 16 * 60          # 16:00
     return window_start <= now_minutes <= window_end, beijing_now
 
