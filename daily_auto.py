@@ -1060,7 +1060,7 @@ def run_mlcs_task(client, mlcs_cfg, server_id, username, password):
     beijing_tz = timezone(timedelta(hours=8))
     beijing_now = datetime.now(timezone.utc).astimezone(beijing_tz)
     now_minutes = beijing_now.hour * 60 + beijing_now.minute
-    window_start = 14 * 60        # 14:00
+    window_start = 15 * 60        # 14:00
     window_end = 16 * 60          # 16:00
     if now_minutes < window_start or now_minutes > window_end:
         return True
@@ -1140,7 +1140,7 @@ def is_mlcs_window_now():
     beijing_tz = timezone(timedelta(hours=8))
     beijing_now = datetime.now(timezone.utc).astimezone(beijing_tz)
     now_minutes = beijing_now.hour * 60 + beijing_now.minute
-    window_start = 14 * 60        # 14:00
+    window_start = 15 * 60        # 14:00
     window_end = 16 * 60          # 16:00
     return window_start <= now_minutes <= window_end, beijing_now
 
