@@ -1296,13 +1296,11 @@ def run_lamu_daily_task(client, lamu_cfg, server_id, username, password):
         if feed_after:
             feed_lamu_ids.append(lamu_id_hex)
 
-        # 切换到下一只拉姆前，先发送1A66，下一只拉姆ID作为目标
         if idx + 1 < valid_count:
             next_lamu_id_hex = valid_lamus[idx + 1]["lamu_id_hex"]
             all_packets.append(f"0000001A66000000D7{{user_id}}0000000000{next_lamu_id_hex}00000001")
 
     if feed_lamu_ids:
-        # 与旧封包流程保持一致：先发一次喂养道具，再分别给每只拉姆喂养
         all_packets.append("0000001EE800000200{user_id}00000000000000010002BF2600000063")
         for feed_lamu_id in feed_lamu_ids:
             all_packets.append(f"0000001E25000001F9{{user_id}}00000000{{user_id}}{feed_lamu_id}0002BF26")
