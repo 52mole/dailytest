@@ -13,6 +13,9 @@ from pathlib import Path
 from struct import pack, unpack
 
 SECRET_KEY = b"^FStx,wl6NquAVRF@f%6\x00"
+BEIJING_TZ = timezone(timedelta(hours=8))
+MLCS_WINDOW_START_MINUTES = 15 * 60
+MLCS_WINDOW_END_MINUTES = 16 * 60
 
 serial_num = 0
 user_id = 0
@@ -206,16 +209,6 @@ class Client:
         self.ysqs_info_event = threading.Event()
         self.recv_cmd_history = []
         self.recv_cmd_history_lock = threading.Lock()
-        self.last_sent_info = ""
-        self.last_sent_info_lock = threading.Lock()
-
-    def set_last_sent_info(self, info):
-        with self.last_sent_info_lock:
-            self.last_sent_info = info
-
-    def get_last_sent_info(self):
-        with self.last_sent_info_lock:
-            return self.last_sent_info
 
     def connect_login_server(self):
         try:
@@ -853,78 +846,17 @@ def build_packet_queue(daily_items, daily_cfg, custom_packets):
     return queue
 
 
-def execute_packet_queue(client, packet_queue, interval_ms, server_id, username, password, lamu_id_hex="00000000"):
-    global user_id
-
-    if not packet_queue:
-        return True
-
-    print(f"[*] 每日封包: {len(packet_queue)}")
-    success_count = 0
-    fail_count = 0
-
-    for index, packet_hex in enumerate(packet_queue, start=1):
-        retry_count = 0
-        sent = False
-        while retry_count < 3 and not sent:
-            attempt_no = retry_count + 1
-            if not client.connected:
-                print("[!] 连接中断，重连中")
-                client.close()
-                time.sleep(2)
-                relogin_ok = (
-                    client.connect_login_server()
-                    and client.login_server_auth(username, password, server_id)
-                    and client.connect_main_server(server_id)
-                    and client.main_server_login(server_id)
-                )
-                if not relogin_ok:
-                    retry_count += 1
-                    continue
-
-            try:
-                final_hex = packet_hex.replace("{user_id}", get_hex(user_id))
-                final_hex = final_hex.replace("{super_lamu_level}", "00000016")
-                final_hex = final_hex.replace("{lamu_id}", lamu_id_hex)
-                packet = Packet(final_hex)
-                if client.send_packet(packet):
-                    success_count += 1
-                    sent = True
-                else:
-                    retry_count += 1
-                    fail_count += 1
-                    time.sleep(0.1)
-            except Exception:
-                retry_count += 1
-                fail_count += 1
-                time.sleep(0.1)
-
-        if not sent:
-            print(f"[!] 发送失败 {index}/{len(packet_queue)}")
-
-        if interval_ms > 0:
-            time.sleep(interval_ms / 1000.0)
-
-    print(f"[*] 每日封包完成: 成功 {success_count} / 总 {len(packet_queue)} / 失败 {fail_count}")
-    time.sleep(5)
-    return True
-
-
-def _run_packet_batch(
+def _send_packet_queue_common(
     client,
     packet_queue,
     interval_ms,
     server_id,
     username,
     password,
-    label,
     lamu_id_hex="00000000",
     jump_to_ranch_on_reconnect=False,
-    require_all_success=False,
+    fail_log_label=None,
 ):
-    if not packet_queue:
-        return True
-
     success_count = 0
     fail_count = 0
 
@@ -957,29 +889,85 @@ def _run_packet_batch(
                 final_hex = final_hex.replace("{super_lamu_level}", "00000016")
                 final_hex = final_hex.replace("{lamu_id}", lamu_id_hex)
                 packet = Packet(final_hex)
-                client.set_last_sent_info(f"{label}#{index}/{len(packet_queue)} cmd={packet.cmd_id}")
                 if client.send_packet(packet):
                     success_count += 1
                     sent = True
                 else:
-                    print(
-                        f"[!] {label} 发送返回失败, 重试 {attempt_no}/3, "
-                        f"connected={client.connected}, last={client.get_last_sent_info()}"
-                    )
+                    if fail_log_label:
+                        print(
+                            f"[!] {fail_log_label} 发送返回失败, 重试 {attempt_no}/3, "
+                            f"connected={client.connected}"
+                        )
                     fail_count += 1
                     retry_count += 1
                     time.sleep(0.1)
             except Exception as exc:
-                print(f"[!] {label} 发送异常, 重试 {attempt_no}/3: {type(exc).__name__}: {exc}")
+                if fail_log_label:
+                    print(f"[!] {fail_log_label} 发送异常, 重试 {attempt_no}/3: {type(exc).__name__}: {exc}")
                 fail_count += 1
                 retry_count += 1
                 time.sleep(0.1)
 
         if not sent:
-            print(f"[!] {label} 发送失败 {index}/{len(packet_queue)}")
+            if fail_log_label:
+                print(f"[!] {fail_log_label} 发送失败 {index}/{len(packet_queue)}")
+            else:
+                print(f"[!] 发送失败 {index}/{len(packet_queue)}")
 
         if interval_ms > 0:
             time.sleep(interval_ms / 1000.0)
+
+    return success_count, fail_count
+
+
+def execute_packet_queue(client, packet_queue, interval_ms, server_id, username, password, lamu_id_hex="00000000"):
+    if not packet_queue:
+        return True
+
+    print(f"[*] 每日封包: {len(packet_queue)}")
+    success_count, fail_count = _send_packet_queue_common(
+        client,
+        packet_queue,
+        interval_ms,
+        server_id,
+        username,
+        password,
+        lamu_id_hex=lamu_id_hex,
+        jump_to_ranch_on_reconnect=False,
+        fail_log_label=None,
+    )
+
+    print(f"[*] 每日封包完成: 成功 {success_count} / 总 {len(packet_queue)} / 失败 {fail_count}")
+    time.sleep(5)
+    return True
+
+
+def _run_packet_batch(
+    client,
+    packet_queue,
+    interval_ms,
+    server_id,
+    username,
+    password,
+    label,
+    lamu_id_hex="00000000",
+    jump_to_ranch_on_reconnect=False,
+    require_all_success=False,
+):
+    if not packet_queue:
+        return True
+
+    success_count, fail_count = _send_packet_queue_common(
+        client,
+        packet_queue,
+        interval_ms,
+        server_id,
+        username,
+        password,
+        lamu_id_hex=lamu_id_hex,
+        jump_to_ranch_on_reconnect=jump_to_ranch_on_reconnect,
+        fail_log_label=label,
+    )
 
     print(f"[*] {label} 完成: 成功 {success_count} / 总 {len(packet_queue)} / 失败 {fail_count}")
     if require_all_success and success_count < len(packet_queue):
@@ -1064,12 +1052,9 @@ def run_mlcs_task(client, mlcs_cfg, server_id, username, password):
     if not _to_bool(mlcs_cfg.get("enabled", False), False):
         return True
 
-    beijing_tz = timezone(timedelta(hours=8))
-    beijing_now = datetime.now(timezone.utc).astimezone(beijing_tz)
+    beijing_now = datetime.now(timezone.utc).astimezone(BEIJING_TZ)
     now_minutes = beijing_now.hour * 60 + beijing_now.minute
-    window_start = 15 * 60        # 15:00
-    window_end = 16 * 60          # 16:00
-    if now_minutes < window_start or now_minutes > window_end:
+    if now_minutes < MLCS_WINDOW_START_MINUTES or now_minutes > MLCS_WINDOW_END_MINUTES:
         return True
 
     level_id_map = {
@@ -1155,12 +1140,9 @@ def run_wish_task(client, wish_cfg, server_id, username, password):
 
 
 def is_mlcs_window_now():
-    beijing_tz = timezone(timedelta(hours=8))
-    beijing_now = datetime.now(timezone.utc).astimezone(beijing_tz)
+    beijing_now = datetime.now(timezone.utc).astimezone(BEIJING_TZ)
     now_minutes = beijing_now.hour * 60 + beijing_now.minute
-    window_start = 15 * 60        # 15:00
-    window_end = 16 * 60          # 16:00
-    return window_start <= now_minutes <= window_end, beijing_now
+    return MLCS_WINDOW_START_MINUTES <= now_minutes <= MLCS_WINDOW_END_MINUTES, beijing_now
 
 
 def run_ranch_egg_task(client, ranch_egg_cfg, server_id, username, password):
