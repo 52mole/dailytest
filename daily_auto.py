@@ -395,7 +395,7 @@ class Client:
                         packet.decrypt()
                         now_ts = time.time()
                         with self.recv_cmd_history_lock:
-                            self.recv_cmd_history.append((now_ts, packet.cmd_id))
+                            self.recv_cmd_history.append((now_ts, packet.cmd_id, packet.version, packet.body))
                             # 仅保留最近120秒，避免历史无限增长
                             self.recv_cmd_history = [item for item in self.recv_cmd_history if now_ts - item[0] <= 120]
                         if packet.cmd_id == 401:
@@ -442,7 +442,14 @@ class Client:
 
     def get_cmd_ids_in_window(self, start_ts, end_ts):
         with self.recv_cmd_history_lock:
-            return [cmd_id for ts, cmd_id in self.recv_cmd_history if start_ts <= ts <= end_ts]
+            return [cmd_id for ts, cmd_id, _version, _body in self.recv_cmd_history if start_ts <= ts <= end_ts]
+
+    def get_cmd_packets_in_window(self, start_ts, end_ts, cmd_id=None):
+        with self.recv_cmd_history_lock:
+            rows = [item for item in self.recv_cmd_history if start_ts <= item[0] <= end_ts]
+        if cmd_id is None:
+            return rows
+        return [item for item in rows if item[1] == cmd_id]
 
     def start_heartbeat(self):
         self.heartbeat_running = True
@@ -1127,16 +1134,73 @@ def run_wish_task(client, wish_cfg, server_id, username, password):
         print(f"[!] 许愿-{wish_item} 模板解析失败: {type(exc).__name__}: {exc}")
         return False
 
-    return _run_packet_batch(
-        client,
-        [packet_hex],
-        50,
-        server_id,
-        username,
-        password,
-        f"许愿-{wish_item}",
-        require_all_success=True,
-    )
+    label = f"许愿-{wish_item}"
+    success_count = 0
+    fail_count = 0
+
+    for attempt_no in range(1, 4):
+        if not client.connected:
+            print("[!] 连接中断，重连中")
+            client.close()
+            time.sleep(2)
+            relogin_ok = (
+                client.connect_login_server()
+                and client.login_server_auth(username, password, server_id)
+                and client.connect_main_server(server_id)
+                and client.main_server_login(server_id)
+            )
+            if not relogin_ok:
+                fail_count += 1
+                continue
+            time.sleep(1.0)
+
+        try:
+            final_hex = packet_hex.replace("{user_id}", get_hex(user_id))
+            packet = Packet(final_hex)
+            send_start = time.time()
+            if not client.send_packet(packet):
+                print(f"[!] {label} 发送返回失败, 重试 {attempt_no}/3, connected={client.connected}")
+                fail_count += 1
+                time.sleep(0.1)
+                continue
+
+            ack_deadline = send_start + 2.5
+            ack_matched = False
+            while time.time() < ack_deadline:
+                matched_packets = client.get_cmd_packets_in_window(send_start, time.time(), cmd_id=751)
+                if matched_packets:
+                    ack_matched = True
+                    _ts, _cmd, version, body = matched_packets[-1]
+                    result = get_int(body[-4:]) if isinstance(body, (bytes, bytearray)) and len(body) >= 4 else 0
+                    if version == 0 and result == 1:
+                        success_count = 1
+                    else:
+                        result_hex = body[-4:].hex().upper() if isinstance(body, (bytes, bytearray)) and len(body) >= 4 else "NONE"
+                        print(
+                            f"[!] {label} 回包失败: cmd=751 version={version} body_tail={result_hex} "
+                            f"(期望 version=0 且 body_tail=00000001, 重试 {attempt_no}/3)"
+                        )
+                        fail_count += 1
+                    break
+                if not client.connected:
+                    break
+                time.sleep(0.05)
+
+            if success_count == 1:
+                break
+
+            if not ack_matched:
+                print(f"[!] {label} 未收到有效回包(cmd=751, version=0, body_tail=00000001), 重试 {attempt_no}/3")
+                fail_count += 1
+            time.sleep(0.2)
+
+        except Exception as exc:
+            print(f"[!] {label} 发送异常, 重试 {attempt_no}/3: {type(exc).__name__}: {exc}")
+            fail_count += 1
+            time.sleep(0.1)
+
+    print(f"[*] {label} 完成: 成功 {success_count} / 总 1 / 失败 {fail_count}")
+    return success_count == 1
 
 
 def is_mlcs_window_now():
