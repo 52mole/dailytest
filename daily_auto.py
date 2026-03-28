@@ -94,24 +94,6 @@ def _normalize_user_id_hex(value, default="00000000"):
         return default
 
 
-def _predict_next_serial(cmd_id, body_bytes):
-    global serial_num
-    packet_len = len(body_bytes) + 18
-    if cmd_id == 201:
-        return 65
-    crc = 0
-    for value in body_bytes:
-        crc ^= value
-    return (
-        serial_num
-        - int(serial_num / 7)
-        + 147
-        + (packet_len - 1) % 21
-        + cmd_id % 13
-        + crc
-    ) % 256
-
-
 LAMU_LEVEL_GROUP = {
     "1-2": {"max": 1, "last": 1},
     "3-4": {"max": 2, "last": 1},
@@ -1174,11 +1156,6 @@ def run_wish_task(client, wish_cfg, server_id, username, password):
 
         try:
             final_hex = packet_hex.replace("{user_id}", get_hex(user_id))
-
-            preview_packet = Packet(final_hex)
-            predicted_serial = _predict_next_serial(preview_packet.cmd_id, preview_packet.body)
-            send_preview_hex = f"{final_hex[:8]}{predicted_serial:02X}{final_hex[10:]}"
-            print(f"[*] {label} 发送封包(实际头预览): {send_preview_hex}")
             packet = Packet(final_hex)
             if not client.send_packet(packet):
                 print(f"[!] {label} 发送返回失败, 重试 {attempt_no}/3, connected={client.connected}")
