@@ -94,6 +94,24 @@ def _normalize_user_id_hex(value, default="00000000"):
         return default
 
 
+def _predict_next_serial(cmd_id, body_bytes):
+    global serial_num
+    packet_len = len(body_bytes) + 18
+    if cmd_id == 201:
+        return 65
+    crc = 0
+    for value in body_bytes:
+        crc ^= value
+    return (
+        serial_num
+        - int(serial_num / 7)
+        + 147
+        + (packet_len - 1) % 21
+        + cmd_id % 13
+        + crc
+    ) % 256
+
+
 LAMU_LEVEL_GROUP = {
     "1-2": {"max": 1, "last": 1},
     "3-4": {"max": 2, "last": 1},
@@ -1110,7 +1128,7 @@ def run_wish_task(client, wish_cfg, server_id, username, password):
     wish_packet_map = {
         "组合蘑菇壁灯": "0000003C85000002EF{user_id}00000000{target_user_id}00027114E7BB84E59088E89891E88F87E5A381E781AF00000000000000000000000000000063",
         "古典落地灯": "0000003C43000002EF{user_id}00000000{target_user_id}00027109E58FA4E585B8E890BDE59CB0E781AF00000000000000000000000000000000000063",
-        "雪花": "0000003C05000002EF{user_id}00000000{target_user_id}0002719DE99BAAE88AB1000000000000000000000000000000000000000000000000000063",
+        "雪花": "0000003C05000002EF{user_id}00000000{target_user_id}0002719DE99BAAE88AB100000000000000000000000000000000000000000000000000000063",
         "绿色蘑菇壁灯": "0000003CE0000002EF{user_id}00000000{target_user_id}0002710CE7BBBFE889B2E89891E88F87E5A381E781AF00000000000000000000000000000063",
         "绿茵壁纸": "0000003C7D000002EF{user_id}00000000{target_user_id}00027149E7BBBFE88CB5E5A381E7BAB800000000000000000000000000000000000000000063",
         "小杠铃": "0000003C23000002EF{user_id}00000000{target_user_id}000271CFE5B08FE69DA0E9938300000000000000000000000000000000000000000000000063",
@@ -1156,7 +1174,11 @@ def run_wish_task(client, wish_cfg, server_id, username, password):
 
         try:
             final_hex = packet_hex.replace("{user_id}", get_hex(user_id))
-            print(f"[*] {label} 发送封包: {final_hex}")
+
+            preview_packet = Packet(final_hex)
+            predicted_serial = _predict_next_serial(preview_packet.cmd_id, preview_packet.body)
+            send_preview_hex = f"{final_hex[:8]}{predicted_serial:02X}{final_hex[10:]}"
+            print(f"[*] {label} 发送封包(实际头预览): {send_preview_hex}")
             packet = Packet(final_hex)
             if not client.send_packet(packet):
                 print(f"[!] {label} 发送返回失败, 重试 {attempt_no}/3, connected={client.connected}")
