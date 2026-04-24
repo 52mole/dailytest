@@ -15,7 +15,7 @@ from struct import pack, unpack
 SECRET_KEY = b"^FStx,wl6NquAVRF@f%6\x00"
 BEIJING_TZ = timezone(timedelta(hours=8))
 MLCS_WINDOW_START_MINUTES = 14 * 60
-MLCS_WINDOW_END_MINUTES = 16 * 60
+MLCS_WINDOW_END_MINUTES = 18 * 60
 
 serial_num = 0
 user_id = 0
